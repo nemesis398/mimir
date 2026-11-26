@@ -14,6 +14,13 @@ from pathlib import Path
 # Seconds to wait before a new note is read back; tests set it to 0.
 REREAD_DELAY = 1.0
 
+# Right after a move into a new folder the app may not know the folder yet,
+# and ``create`` then fails with this line. It is retried CREATE_RETRIES
+# times, RETRY_DELAY seconds apart; tests set the delay to 0.
+FOLDER_RACE = "Folder already exists"
+CREATE_RETRIES = 3
+RETRY_DELAY = 1.0
+
 
 class CliError(Exception):
     """The Obsidian CLI could not run, exited non-zero or printed Error:."""
@@ -57,7 +64,14 @@ def create_note(vault: Path, rel: str, text: str) -> Path:
     vault = Path(vault)
     path = vault / rel
     os.makedirs(path.parent, exist_ok=True)
-    run(["create", f"path={rel}"], cwd=vault)
+    for attempt in range(CREATE_RETRIES + 1):
+        try:
+            run(["create", f"path={rel}"], cwd=vault)
+            break
+        except CliError as err:
+            if FOLDER_RACE not in str(err) or attempt == CREATE_RETRIES:
+                raise
+            time.sleep(RETRY_DELAY)
     data = text.encode("utf-8")
     path.write_bytes(data)
     time.sleep(REREAD_DELAY)

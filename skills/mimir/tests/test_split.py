@@ -275,6 +275,32 @@ class CliTest(unittest.TestCase):
                 obsidian_cli.run(["create", "path=x.md"])
             self.assertIn("stub", obsidian_cli.run(["version"]))
 
+    def test_create_retries_the_folder_race(self):
+        race = obsidian_cli.CliError(
+            "obsidian create path=a/b.md: Error: Folder already exists.")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(obsidian_cli, "RETRY_DELAY", 0), \
+                mock.patch.object(obsidian_cli, "REREAD_DELAY", 0), \
+                mock.patch.object(obsidian_cli, "run",
+                                  side_effect=[race, "Created"]) as run:
+            obsidian_cli.create_note(Path(tmp), "a/b.md", "text\n")
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual((Path(tmp) / "a/b.md").read_text(), "text\n")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(obsidian_cli, "RETRY_DELAY", 0), \
+                mock.patch.object(obsidian_cli, "run",
+                                  side_effect=[race] * 4) as run:
+            with self.assertRaises(obsidian_cli.CliError):
+                obsidian_cli.create_note(Path(tmp), "a/b.md", "text\n")
+            self.assertEqual(run.call_count, 4)
+        other = obsidian_cli.CliError("obsidian create path=x: Error: nope")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(obsidian_cli, "run",
+                                  side_effect=[other]) as run:
+            with self.assertRaises(obsidian_cli.CliError):
+                obsidian_cli.create_note(Path(tmp), "a/b.md", "text\n")
+            self.assertEqual(run.call_count, 1)
+
     def test_run_takes_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "cwd.log"
