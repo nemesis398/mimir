@@ -47,6 +47,7 @@ _DISPLAY = re.compile(r"^displayName[ \t]*:(?:[ \t]+(.*?))?[ \t]*$")
 _DISPLAY_FLOW = re.compile(
     r"\bdisplayName[ \t]*:[ \t]*(\"[^\"]*\"|'[^']*'|[^,}]+)")
 _EMPTY_FLOW = re.compile(r"^\[[ \t]*\](?:[ \t]+#.*)?$")
+_WIKILINK = re.compile(r"^\[\[[^\[\]]*\]\](?:[ \t]+#.*)?$")
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,12 @@ def restyle(text: str, cfg: config.Config) -> tuple[str | None, str | None]:
         if any(i not in covered
                for i in range(keyed[0].start, keyed[-1].stop)):
             return None, "a comment or blank line between keys"
+        moved = {old for slot, old in enumerate(order) if old != slot}
+        if any(_keeps_tail(keyed[old].raw) for old in moved):
+            return None, "a keep-chomped block scalar that would move"
+        if len(keyed) - 1 in moved and any(
+                not lines[i].strip() for i in range(keyed[-1].stop, end)):
+            return None, "a blank line after the last key, which would move"
     starts = {entry.start: entry for entry in keyed}
     out, slot, i = [lines[0]], 0, 1
     while i < end:
@@ -190,10 +197,44 @@ def restyle(text: str, cfg: config.Config) -> tuple[str | None, str | None]:
             out.append(lines[i])
             i += 1
     new = "".join(out + lines[end:])
-    if notes.parse_front(new) != notes.parse_front(text) \
-            or notes.front_errors(new):
+    if not _same_front(text, new) or notes.front_errors(new):
         return None, "the rewrite would change a value"
     return new, None
+
+
+def _same_front(old: str, new: str) -> bool:
+    """Whether new's frontmatter and body read as old's do.
+
+    The lenient parser drops the blank lines after a block scalar, which a
+    keep-chomped one (``|+``, ``>+``) keeps, so they are counted here too.
+    """
+    return notes.parse_front(new) == notes.parse_front(old) \
+        and _block_tails(new) == _block_tails(old)
+
+
+def _block_tails(text: str) -> dict[str, int]:
+    """The number of blank lines after each block scalar key of text."""
+    layout = notes.front_entries(text)
+    if layout is None:
+        return {}
+    lines, end, entries = layout
+    tails = {}
+    for at, entry in enumerate(entries):
+        if entry.key is None or not entry.raw.startswith(("|", ">")):
+            continue
+        stop = entries[at + 1].start if at + 1 < len(entries) else end
+        count = 0
+        for line in lines[entry.stop:stop]:
+            if line.strip():
+                break
+            count += 1
+        tails[entry.key] = count
+    return tails
+
+
+def _keeps_tail(raw: str) -> bool:
+    """Whether raw is a block scalar header with the keep (+) indicator."""
+    return raw.startswith(("|", ">")) and "+" in raw.split("#", 1)[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,7 +478,7 @@ def _key_ranks(keys: list[str], order: tuple[str, ...]) -> list[int]:
 def _list_form(lines: list[str], entry: notes.Entry) -> str | None:
     """"flow" or "block" when entry's value is a non-empty list, else None."""
     raw = entry.raw
-    if raw.startswith("[") and not raw.startswith("[[") \
+    if raw.startswith("[") and not _WIKILINK.match(raw) \
             and not _EMPTY_FLOW.match(raw):
         return "flow"
     if raw and not raw.startswith("#"):
@@ -451,6 +492,9 @@ def _list_form(lines: list[str], entry: notes.Entry) -> str | None:
 
 def _block_list(lines: list[str], entry: notes.Entry) -> list[str]:
     """The lines of entry's one-line flow list as a block list."""
+    if re.match(r"\[[ \t]*\[\[", entry.raw):
+        raise ValueError("a flow list of unquoted wikilinks, YAML reads "
+                         "each as a nested list; quote them")
     items = notes.flow_items(entry.raw)
     if entry.stop > entry.start + 1:
         raise ValueError("a multi-line flow list")

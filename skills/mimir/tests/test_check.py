@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import unittest
+from unittest import mock
 
 from helpers import VaultTestCase, config_data, make_config
 
@@ -550,6 +551,70 @@ class CheckTest(VaultTestCase):
         self.assertIn("nested flow list", err)
         self.assertIn("multi-line flow list", err)
         self.assertIn("anchor", err)
+
+    def test_keep_chomped_scalar_not_moved(self):
+        cfg = make_config(style_data())
+        keep = "---\ntags:\n  - a\ndescription: |+\n  one\n\n\n---\n# Body\n"
+        new, reason = check.restyle(keep, cfg)
+        self.assertIsNone(new)
+        self.assertTrue(reason)
+        inner = "---\ndescription: |+\n  one\ntype: guide\n---\n"
+        self.assertEqual(check.restyle(inner, cfg),
+                         (None, "a keep-chomped block scalar that would move"))
+        tail = "---\ntags:\n  - a\ntype: guide\n\n---\n"
+        self.assertEqual(check.restyle(tail, cfg),
+                         (None, "a blank line after the last key, which "
+                                "would move"))
+        stays = "---\ntype: guide\ndescription: |+\n  one\n\n\ntags: [a]\n\n---\n"
+        self.assertEqual(check.restyle(stays, cfg),
+                         (stays.replace("tags: [a]\n", "tags:\n  - a\n"),
+                          None))
+
+    def test_final_comparison_sees_kept_blank_lines(self):
+        keep = "---\ntags:\n  - a\ndescription: |+\n  one\n\n\n---\n# Body\n"
+        lost = "---\ndescription: |+\n  one\ntags:\n  - a\n\n\n---\n# Body\n"
+        self.assertTrue(check._same_front(keep, keep))
+        self.assertFalse(check._same_front(keep, lost))
+
+    def test_style_refusals(self):
+        cfg = make_config(style_data())
+        cases = {
+            "---\ntags: [a]\ntags: [b]\n---\n": "a key that appears twice",
+            "---\ntags: [a]\nnot a key\n---\n":
+                "a top-level line that is no key",
+            "---\ntags: [a]\naliases:\n\t- x\n---\n":
+                "a frontmatter a YAML parser would reject",
+        }
+        for text, reason in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(check.restyle(text, cfg), (None, reason))
+        with mock.patch.object(check, "_block_list",
+                               return_value=["tags:\n", "  - b\n"]):
+            self.assertEqual(check.restyle("---\ntags: [a]\n---\n", cfg),
+                             (None, "the rewrite would change a value"))
+
+    def test_front_required_spares_templates(self):
+        data = style_data()
+        data["kinds"]["spec"]["template"] = "AI/specs/templates/Spec.md"
+        self.write({"AI/specs/templates/Spec.md": "# Spec\n"})
+        findings = self.run_check(data)
+        self.assertEqual([f for f in findings if "no frontmatter" in f.message],
+                         [], findings)
+
+    def test_flow_list_of_wikilinks_reported(self):
+        files = {"Workshop/W.md": "---\ntype: guide\n"
+                                 "related: [[[Alice]], [[Bob]]]\n---\nbody\n",
+                 "Workshop/L.md": "---\ntype: guide\nrelated: [[Alice]]\n"
+                                 "---\nbody\n"}
+        self.write(files)
+        self.assert_only(self.run_check(style_data()), "ERROR",
+                         "Workshop/W.md", "list style", "related")
+        code, out, err = self.run_cli_err("--fix")
+        for rel, text in files.items():
+            self.assertEqual((self.vault / rel).read_text(), text)
+        self.assertIn("Workshop/W.md: style: not rewritten, a flow list of "
+                      "unquoted wikilinks", err)
+        self.assertNotIn("Workshop/L.md", err + out)
 
     def test_done_plan_expects_100(self):
         self.write({"AI/plans/P.md": plan(status="done", progress=100,
