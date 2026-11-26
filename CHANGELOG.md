@@ -18,6 +18,11 @@ follow [Semantic Versioning](https://semver.org/).
   `project` links, folders without their hub, the root, the properties a
   `.base` reads, the size cap and the kinds' templates. `--fix` writes the
   counted `progress` and nothing else.
+- `notes.front_errors`, and with it a `check` ERROR naming the line, for
+  frontmatter a YAML parser would reject: `: ` or a final `:` inside an
+  unquoted value, an unclosed quote or flow list, text after the closing
+  quote or bracket, a tab in the indentation, a reserved first character
+  and a stray list item. Obsidian marks such properties as invalid.
 - `scripts/split.py`, which splits a long note into a hub and parts, moving
   its text byte for byte and rewriting the links to its sections. Every
   split note lives in its own folder, `<dir>/<name>/<name>.md`, with its

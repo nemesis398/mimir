@@ -107,5 +107,88 @@ class LoadNotesTest(VaultTestCase):
         self.assertEqual(note.size, len(content.encode("utf-8")))
 
 
+HUB_LINE = "description: Persönliches: Alices Garten und die Bienenstöcke."
+
+
+def front(*lines):
+    return "---\n" + "\n".join(lines) + "\n---\nBody\n"
+
+
+class FrontErrorsTest(unittest.TestCase):
+    def assert_clean(self, *lines):
+        self.assertEqual(notes.front_errors(front(*lines)), [], lines)
+
+    def assert_error(self, line_no, fragment, *lines):
+        errors = notes.front_errors(front(*lines))
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(errors[0].startswith(f"frontmatter line {line_no}: "),
+                        errors)
+        self.assertIn(fragment, errors[0])
+
+    def test_hub_line_with_colon_space_rejected(self):
+        self.assert_error(3, '": "', "type: area", HUB_LINE)
+
+    def test_hub_line_keeps_its_parse(self):
+        front_, _ = notes.parse_front(front(HUB_LINE))
+        self.assertEqual(front_["description"],
+                         "Persönliches: Alices Garten und die Bienenstöcke.")
+
+    def test_quoted_hub_line_passes(self):
+        self.assert_clean('description: "Persönliches: Alices Garten und die '
+                          'Bienenstöcke."')
+        self.assert_clean("description: 'Persönliches: Alices Garten'")
+
+    def test_values_yaml_accepts_pass(self):
+        self.assert_clean("url: https://example.com/a", "time: 12:30",
+                          "tags: [a, b]", "aliases:", "  - One",
+                          '  - "Two: three"', "related:", "- a: b",
+                          "note: a #comment: here", "folded: >-",
+                          "  Text with: a colon", "  and more: text",
+                          "literal: |", "  key: value", "empty:",
+                          "link: [[A]]", "multi: one", "  two",
+                          "quoted: \"one", "  two\"", "flow: [a,", "  b]",
+                          "nested:", "  inner: value", "colon: :x")
+
+    def test_trailing_colon_rejected(self):
+        self.assert_error(2, '":" at the end', "description: Fazit:")
+
+    def test_colon_space_on_continuation_line(self):
+        self.assert_error(3, '": "', "description: one", "  two: three")
+
+    def test_colon_space_in_list_item_value(self):
+        self.assert_error(3, '": "', "items:", "  - a: b: c")
+
+    def test_unclosed_quote(self):
+        self.assert_error(2, "quote", 'description: "open', "type: plan")
+
+    def test_text_after_closing_quote(self):
+        self.assert_error(2, "after", 'description: "a" b')
+
+    def test_unclosed_flow_list(self):
+        self.assert_error(2, "[", "tags: [a, b", "type: plan")
+
+    def test_text_after_flow_list(self):
+        self.assert_error(2, "after", "related: [[A]], [[B]]")
+
+    def test_tab_in_indentation(self):
+        self.assert_error(3, "tab", "tags:", "\t- a")
+
+    def test_reserved_first_character(self):
+        self.assert_error(2, "@", "owner: @alice")
+
+    def test_list_item_after_scalar(self):
+        self.assert_error(3, "list", "type: plan", "- stray")
+
+    def test_one_error_per_problem(self):
+        errors = notes.front_errors(front(HUB_LINE, "type: plan",
+                                          "other: a: b"))
+        self.assertEqual([e.split(":")[0] for e in errors],
+                         ["frontmatter line 2", "frontmatter line 4"])
+
+    def test_no_frontmatter_no_errors(self):
+        self.assertEqual(notes.front_errors("# Title\nkey: a: b\n"), [])
+        self.assertEqual(notes.front_errors(""), [])
+
+
 if __name__ == "__main__":
     unittest.main()

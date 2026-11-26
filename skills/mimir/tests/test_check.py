@@ -51,6 +51,25 @@ class CheckTest(VaultTestCase):
         self.write({"AI/plans/P.md": plan(status="stale")})
         self.assert_only(self.run_check(), "ERROR", "AI/plans/P.md", "stale")
 
+    # frontmatter YAML would reject
+
+    def test_frontmatter_yaml_rejects(self):
+        self.write({"Personal/Personal.md": (
+            "---\ntype: guide\n"
+            "description: Persönliches: Alices Garten und die Bienenstöcke.\n"
+            "---\n")})
+        findings = self.run_check()
+        self.assertIn(check.Finding(
+            "ERROR", "Personal/Personal.md",
+            'frontmatter line 3: ": " inside an unquoted value, quote it'),
+            findings)
+
+    def test_quoted_frontmatter_passes(self):
+        self.write({"Workshop/G.md": (
+            "---\ntype: guide\n"
+            "description: \"Persönliches: Alices Garten\"\n---\n")})
+        self.assertEqual(self.run_check(), [])
+
     # bases
 
     def test_base_unknown_property(self):

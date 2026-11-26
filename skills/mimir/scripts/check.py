@@ -201,6 +201,9 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
                          f"{cfg.size_cap_bytes}"))
     if front is None:
         return found
+    text = note.path.read_bytes().decode("utf-8", errors="replace")
+    for problem in notes.front_errors(text):
+        error(problem)
     note_type = _type(note)
     status = front.get("status")
     if status is not None:
