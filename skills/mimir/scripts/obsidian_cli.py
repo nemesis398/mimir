@@ -7,6 +7,12 @@ binary is ``MIMIR_OBSIDIAN`` when that is set, else ``obsidian``.
 
 import os
 import subprocess
+import time
+from pathlib import Path
+
+
+# Seconds to wait before a new note is read back; tests set it to 0.
+REREAD_DELAY = 1.0
 
 
 class CliError(Exception):
@@ -34,3 +40,24 @@ def run(args: list[str]) -> str:
         if line.lstrip().startswith("Error:"):
             raise CliError(f"obsidian {shown}: {line.strip()}")
     return done.stdout
+
+
+def create_note(vault: Path, rel: str, text: str) -> Path:
+    """Create the note rel in vault with exactly text, through the app.
+
+    ``content=`` would turn every backslash-n in the text into a newline, so
+    the app creates the file and the bytes are written to it directly. After
+    REREAD_DELAY seconds the file is read back; when it differs, a folder
+    template got there first and CliError is raised.
+    """
+    vault = Path(vault)
+    path = vault / rel
+    os.makedirs(path.parent, exist_ok=True)
+    run(["create", f"path={rel}"])
+    data = text.encode("utf-8")
+    path.write_bytes(data)
+    time.sleep(REREAD_DELAY)
+    if path.read_bytes() != data:
+        raise CliError(f"{rel}: the file changed after it was written "
+                       "(a folder template filled it?)")
+    return path

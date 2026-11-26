@@ -302,6 +302,12 @@ def main(argv: list[str] | None = None) -> int:
         reason = skip_reason(cfg, rel, front)
         if reason:
             raise SplitError(f"{rel}: skipped by the config ({reason})")
+        status = front.get("status") if front else None
+        plan_type = cfg.kinds["plan"].note_type if "plan" in cfg.kinds \
+            else "plan"
+        if status == "active" and front.get("type") == plan_type:
+            raise SplitError(f"{rel}: status is active; a plan that is "
+                             "being worked is not split")
         if len(data) <= cfg.size_cap_bytes and not args.force:
             raise SplitError(
                 f"{rel}: {len(data)} bytes, not over the cap of "
@@ -346,16 +352,13 @@ def main(argv: list[str] | None = None) -> int:
     for base, part in parts:
         part_rel = f"{prefix}{base}.md"
         try:
-            obsidian_cli.run(["create", f"path={part_rel}"])
+            obsidian_cli.create_note(vault, part_rel, part)
         except obsidian_cli.CliError as err:
             print(f"split: {err}", file=sys.stderr)
             print(f"split: stopped; {rel} is untouched; created before the "
                   f"failure: {', '.join(created) or 'nothing'}",
                   file=sys.stderr)
             return 1
-        # content= would turn every backslash-n in the text into a newline,
-        # so the part's exact bytes go to the file the app has created.
-        (vault / part_rel).write_bytes(part.encode("utf-8"))
         created.append(part_rel)
         print(f"created {part_rel}")
     path.write_bytes(hub.encode("utf-8"))

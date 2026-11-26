@@ -221,6 +221,9 @@ class CliTest(unittest.TestCase):
 class SplitCommandTest(VaultTestCase):
     def setUp(self):
         super().setUp()
+        patcher = mock.patch.object(obsidian_cli, "REREAD_DELAY", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.log = self.vault.parent / f"{self.vault.name}.log"
         self.addCleanup(lambda: self.log.unlink(missing_ok=True))
         self.write({".mimir.json": json.dumps(CONFIG)})
@@ -322,6 +325,29 @@ class SplitCommandTest(VaultTestCase):
                 self.assertIn("skipped", out)
         self.assertEqual(snapshot(self.vault), before)
         self.assertEqual(self.calls(), [])
+
+    def test_active_plan_refused(self):
+        self.write({"Work plan.md": PHASE_PLAN.replace(
+            "status: done", "status: active", 1)})
+        before = snapshot(self.vault)
+        code, out = self.run_split("Work plan.md")
+        self.assertNotEqual(code, 0)
+        self.assertIn("active", out)
+        self.assertEqual(snapshot(self.vault), before)
+        self.assertEqual(self.calls(), [])
+
+    def test_template_filled_part_stops_split(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        before = (self.vault / "Work plan.md").read_bytes()
+
+        def templater(_seconds):
+            for path in self.vault.glob("Work plan – *.md"):
+                path.write_text("template text\n", encoding="utf-8")
+
+        with mock.patch.object(obsidian_cli.time, "sleep", templater):
+            code, out = self.run_split("Work plan.md")
+        self.assertNotEqual(code, 0)
+        self.assertEqual((self.vault / "Work plan.md").read_bytes(), before)
 
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,
