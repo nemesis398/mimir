@@ -454,17 +454,25 @@ def skip_reason(cfg: config.Config, rel: str, front: dict | None) -> str | None:
     return None
 
 
+def _not_a_symlink(path: Path, note: str) -> Path:
+    """path resolved; SplitError when the note itself is a symlink."""
+    if path.is_symlink():
+        raise SplitError(f"{note}: a symlink to {os.path.realpath(path)}; "
+                         "split does not follow it, split that note instead")
+    return path.resolve()
+
+
 def _find_note(vault: Path, note: str) -> Path:
     given = Path(note)
     for candidate in (given, vault / note, vault / f"{note}.md"):
         if candidate.is_file():
             path = candidate.resolve()
             if path.is_relative_to(vault):
-                return path
+                return _not_a_symlink(candidate, note)
     stem = note[:-3] if note.endswith(".md") else note
     matches = [p for p in _markdown_files(vault) if p.name[:-3] == stem]
     if len(matches) == 1:
-        return matches[0].resolve()
+        return _not_a_symlink(matches[0], note)
     if matches:
         raise SplitError(f"{note}: {len(matches)} notes have this name; "
                          "give the path")
@@ -628,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         for file, link, reason in left:
             print(f"left {file.relative_to(vault).as_posix()}: {link} "
                   f"({reason})")
-    except (obsidian_cli.CliError, SplitError) as err:
+    except (OSError, obsidian_cli.CliError, SplitError) as err:
         state = ("the hub is written" if hub_written
                  else f"{new_rel} is not overwritten")
         print(f"split: {err}", file=sys.stderr)

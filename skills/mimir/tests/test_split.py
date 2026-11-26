@@ -678,6 +678,53 @@ class SplitCommandTest(VaultTestCase):
                     self.assertIn(f"{prefix} Other.md: {link} (", out)
         self.assertEqual((self.vault / "Other.md").read_text("utf-8"), other)
 
+    def test_oserror_lists_created_parts(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        real = obsidian_cli.create_note
+        calls = []
+
+        def create(*args):
+            calls.append(args)
+            if len(calls) > 1:
+                raise OSError(28, "No space left on device")
+            return real(*args)
+
+        with mock.patch.object(split.obsidian_cli, "create_note", create):
+            code, out = self.run_split("Work plan.md", "--force")
+        self.assertEqual(code, 1, out)
+        self.assertIn("No space left on device", out)
+        self.assertIn("created before the failure: "
+                      "Work plan/Work plan – Phase 1 Setup.md\n", out)
+        self.assertEqual((self.vault / "Work plan/Work plan.md")
+                         .read_text("utf-8"), PHASE_PLAN)
+
+    def test_failed_hub_replace_keeps_the_note(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        with mock.patch.object(split.os, "replace",
+                               side_effect=OSError(5, "I/O error")):
+            code, out = self.run_split("Work plan.md", "--force")
+        self.assertEqual(code, 1, out)
+        self.assertIn("created before the failure: Work plan/Work plan – "
+                      "Phase 1 Setup.md, Work plan/Work plan – Phase 2 Use.md",
+                      out)
+        self.assertEqual(snapshot(self.vault / "Work plan")["Work plan.md"],
+                         PHASE_PLAN.encode())
+        self.assertEqual([name for name in snapshot(self.vault)
+                          if "/." in "/" + name], [".mimir.json"])
+
+    def test_symlinked_note_refused(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        (self.vault / "Link.md").symlink_to("Work plan.md")
+        before = snapshot(self.vault)
+        for note in ("Link.md", "Link"):
+            with self.subTest(note=note):
+                code, out = self.run_split(note, "--force")
+                self.assertNotEqual(code, 0)
+                self.assertIn("symlink", out)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(snapshot(self.vault), before)
+        self.assertTrue((self.vault / "Link.md").is_symlink())
+
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,
                     "Elsewhere/Work plan – Phase 2 Use.md": "taken\n"})
