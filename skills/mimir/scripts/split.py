@@ -141,9 +141,13 @@ def _plan(name: str, text: str, level: int, keep=()):
     if not 1 <= level <= 6:
         raise SplitError(f"level {level}: must be 1 to 6")
     heads = _headings(text)
-    cuts = [h for h in heads if h.depth == level]
-    if not cuts:
+    at_level = [h for h in heads if h.depth == level]
+    if not at_level:
         raise SplitError(f"no heading of level {level} outside fenced code")
+    # From the first heading at level on, a shallower heading starts a part
+    # too, so a section never runs on past a heading above it.
+    cuts = [h for h in heads
+            if h.offset >= at_level[0].offset and h.depth <= level]
     keep = set(keep)
     missing = sorted(keep - {cut.text for cut in cuts})
     if missing:

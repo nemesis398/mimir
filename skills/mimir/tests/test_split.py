@@ -159,8 +159,21 @@ class SplitTextTest(unittest.TestCase):
         self.assertEqual([b for b, _ in parts],
                          ["Work plan – Phase 1 Setup", "Work plan – Phase 2 Use"])
         hub, parts = split.split_text("Work plan", PHASE_PLAN, level=3)
-        self.assertEqual(len(parts), 3)
+        self.assertEqual([b for b, _ in parts],
+                         ["Work plan – Task 1 Desk", "Work plan – Task 2 Chair",
+                          "Work plan – Phase 2 Use", "Work plan – Task 3 Sit"])
+        self.assertIn("Intro to the phase.\n", hub)
         self.assertEqual(split.join_parts(hub, parts), PHASE_PLAN)
+
+    def test_shallower_heading_ends_a_deeper_part(self):
+        text = ("# Plan\n\n## Review Focus\n\n- one\n\n### Task 1: A\n\na\n\n"
+                "### Task 2: B\n\nb\n\n## Rulings\n\nr\n")
+        hub, parts = split.split_text("Plan", text, level=3)
+        self.assertEqual([b for b, _ in parts],
+                         ["Plan – Task 1 A", "Plan – Task 2 B", "Plan – Rulings"])
+        self.assertEqual(parts[1][1], "### Task 2: B\n\nb\n\n")
+        self.assertIn("## Review Focus\n\n- one\n", hub)
+        self.assertEqual(split.join_parts(hub, parts), text)
 
     def test_hub_keeps_frontmatter_and_preamble(self):
         hub, parts = split.split_text("Garden Shed", ENTITY)
