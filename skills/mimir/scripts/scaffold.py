@@ -18,14 +18,14 @@ import config  # noqa: E402
 
 
 def template_text(kind: config.Kind) -> str:
-    """The text of a kind's template, with {{name}} and {{date}} left in."""
+    """The text of a kind's template, with {{title}} and {{date}} left in, which Obsidian's Templates plugin and new.py both fill."""
     lines = ["---", f"type: {kind.note_type}"]
     if kind.has_status:
         lines.append("status: planned")
     for key in kind.required:
         if key not in ("type", "status"):
             lines.append(f"{key}:")
-    lines += ["---", "", "# {{name}}", ""]
+    lines += ["---", "", "# {{title}}", ""]
     return "\n".join(lines)
 
 

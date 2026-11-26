@@ -138,7 +138,7 @@ What a finding asks for:
 ### new
 
 `new.py` makes a kind's note where "Where a note goes" puts it, from the
-kind's `template` with `{{name}}` and `{{date}}` filled. `--parent NAME`
+kind's `template` with `{{title}}` (or `{{name}}`) and `{{date}}` filled, the placeholders Obsidian's Templates plugin fills too. `--parent NAME`
 sets `project: "[[NAME]]"` and needs a template with frontmatter. It
 refuses a name that exists anywhere in the
 vault, a name with one of `/ \ : # ^ | [ ] * " < > ?`, an unknown kind or

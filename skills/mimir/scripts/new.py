@@ -2,7 +2,7 @@
 """Start a note of a configured kind from its template.
 
 A kind with ``hub`` gets its own folder, ``<area>/<folder>/<name>/<name>.md``;
-any other kind is ``<area>/<folder>/<name>.md``. ``{{name}}`` and ``{{date}}``
+any other kind is ``<area>/<folder>/<name>.md``. ``{{name}}`` (or ``{{title}}``, as Obsidian's Templates plugin writes it) and ``{{date}}``
 in the template are filled. The note is created the way split.py does it.
 
 Usage: new.py KIND NAME --area AREA [--parent NAME] [--vault PATH]
@@ -45,9 +45,11 @@ _BAD_NAME = re.compile(r'[/\\:#^|\[\]*"<>?]')
 
 
 def _with_parent(text: str, parent: str) -> str:
-    """text with ``project: "[[parent]]"`` set in its frontmatter.
+    """text with ``project`` set to the one-item list ``"[[parent]]"``.
 
-    The line ends like the frontmatter's first line, so a CRLF template stays
+    A ``project`` key the template already has is replaced with its items;
+    a new one goes after ``status`` or ``type``, as the key order asks. The
+    lines end like the frontmatter's first line, so a CRLF template stays
     CRLF. A template without frontmatter raises NewError.
     """
     lines = text.split("\n")
@@ -60,12 +62,21 @@ def _with_parent(text: str, parent: str) -> str:
     else:
         raise NewError("--parent: the template's frontmatter is not closed")
     ending = "\r" if lines[0].endswith("\r") else ""
-    line = f'project: "[[{parent}]]"{ending}'
+    block = [f"project:{ending}", f'  - "[[{parent}]]"{ending}']
     for index in range(1, end):
         if lines[index].startswith("project:"):
-            lines[index] = line
+            stop = index + 1
+            while stop < end and lines[stop][:1] in (" ", "-"):
+                stop += 1
+            lines[index:stop] = block
             return "\n".join(lines)
-    lines.insert(end, line)
+    at = end
+    for key in ("status:", "type:"):
+        found = [i for i in range(1, end) if lines[i].startswith(key)]
+        if found:
+            at = found[0] + 1
+            break
+    lines[at:at] = block
     return "\n".join(lines)
 
 
@@ -92,7 +103,7 @@ def new_note(vault: Path, cfg: config.Config, kind: str, name: str,
             raise NewError(f"{spec.template}: not UTF-8") from None
     else:
         text = scaffold.template_text(spec)
-    text = text.replace("{{name}}", name).replace(
+    text = text.replace("{{name}}", name).replace("{{title}}", name).replace(
         "{{date}}", datetime.date.today().isoformat())
     if parent:
         text = _with_parent(text, parent)

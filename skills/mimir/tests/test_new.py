@@ -69,8 +69,24 @@ class NewNoteTest(VaultTestCase):
     def test_parent_sets_project_link(self):
         path = new.new_note(self.vault, self.cfg, "plan", "Backup", "AI",
                             parent="Pantry")
-        self.assertIn('project: "[[Pantry]]"\n',
-                      path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('status: planned\nproject:\n  - "[[Pantry]]"\n', text)
+
+    def test_parent_replaces_a_template_project_list(self):
+        self.write({"templates/Project.md":
+                    '---\ntype: project\nproject:\n  - "[[Old]]"\n'
+                    'description:\n---\n'})
+        path = new.new_note(self.vault, self.cfg, "project", "Pantry",
+                            "Workshop", parent="Garden")
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('type: project\nproject:\n  - "[[Garden]]"\n'
+                      'description:\n', text)
+        self.assertNotIn("Old", text)
+
+    def test_title_placeholder_filled(self):
+        self.write({"templates/Project.md": "---\ntype: project\n---\n\n# {{title}}\n"})
+        path = new.new_note(self.vault, self.cfg, "project", "Pantry", "Workshop")
+        self.assertIn("# Pantry\n", path.read_text(encoding="utf-8"))
 
     def test_cli_runs_in_the_vault(self):
         new.new_note(self.vault, self.cfg, "project", "Pantry", "Workshop")
@@ -85,7 +101,7 @@ class NewNoteTest(VaultTestCase):
         path = new.new_note(self.vault, self.cfg, "project", "Pantry",
                             "Workshop", parent="Garden")
         data = path.read_bytes()
-        self.assertIn(b'project: "[[Garden]]"\r\n', data)
+        self.assertIn(b'project:\r\n  - "[[Garden]]"\r\n', data)
         self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))
 
     def test_parent_without_frontmatter_raises(self):
