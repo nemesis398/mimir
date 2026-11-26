@@ -55,7 +55,10 @@ Decide in this order, reading each value from `.mimir.json`:
 5. **Its frontmatter.** Its `status` is one of `states`, or one of the extra
    states `states_by_type` lists for its `type`. A note with a `type` uses
    only the keys in `view_properties`, `allowed_keys` and its kind's
-   `required`, and every `required` key has a value.
+   `required`, and every `required` key has a value. When the config sets
+   them, each key in `date_keys` holds an unquoted `YYYY-MM-DD` date, each
+   tag matches `tag_pattern`, and the note's name matches its kind's
+   `name_pattern`.
 
 A note whose `type` no kind names is filed by area alone. Propose the path
 and wait for the user before you move a note that already exists.
@@ -97,6 +100,17 @@ What a finding asks for:
   note or folder into an area (see "Where a note goes").
 - `unknown property ...` in a `.base`: the base reads a property that no
   note may carry. Fix the base, not the notes.
+- `... is ..., not an unquoted YYYY-MM-DD date`: write the date as
+  `2026-11-26`, without quotes. Ask the user when the day is unclear.
+- `tags ... do not match the tag_pattern`: rename the tag to the pattern's
+  form, such as `bee-keeping` for `Bee_Keeping`.
+- `name does not match ..., the name_pattern of kind ...`: rename the note
+  with `obsidian rename` to the pattern's form; propose the name first.
+- `property ... has 2 labels`: the bases and `base` code blocks give one
+  property different `displayName` values. Pick one with the user and set
+  it in every base the finding names.
+- WARN `description contains ..., from warn_words`: rewrite the
+  description in the vault's language for property values.
 - WARN `... bytes, over the cap`: split the note, unless it is an active
   plan.
 - WARN `template of kind ... is missing` or `has no status`: run

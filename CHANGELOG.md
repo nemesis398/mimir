@@ -23,6 +23,11 @@ follow [Semantic Versioning](https://semver.org/).
   unquoted value, an unclosed quote or flow list, text after the closing
   quote or bracket, a tab in the indentation, a reserved first character
   and a stray list item. Obsidian marks such properties as invalid.
+- Format rules in `check`, each off until its key is set: `date_keys`
+  (unquoted `YYYY-MM-DD` dates), `tag_pattern` (every tag), `warn_words`
+  (a WARN on those words in a `description`) and a kind's `name_pattern`
+  (its notes' names). One `displayName` per property across all `.base`
+  files and `base` code blocks is always checked.
 - `scripts/split.py`, which splits a long note into a hub and parts, moving
   its text byte for byte and rewriting the links to its sections. Every
   split note lives in its own folder, `<dir>/<name>/<name>.md`, with its

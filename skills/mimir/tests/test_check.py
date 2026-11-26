@@ -253,6 +253,94 @@ class CheckTest(VaultTestCase):
 
     # the CLI and --fix
 
+    # formats
+
+    def test_format_rules_off_without_keys(self):
+        self.write({"AI/plans/My plan.md": plan(
+            extra="updated: 26.11.2026\ntags: [Bienen]").replace(
+                "description: A plan", "description: Der Garten und mehr")})
+        self.assertEqual(self.run_check(), [])
+
+    def test_date_format(self):
+        data = config_data()
+        data["date_keys"] = ["updated", "created"]
+        self.write({"AI/plans/P.md": plan(extra="updated: 2026-11-26")})
+        self.assertEqual(self.run_check(data), [])
+        for bad in ("26.11.2026", '"2026-11-26"', "2026-02-30",
+                    "2026-11-26 14:31", "[2026-11-26]"):
+            self.write({"AI/plans/P.md": plan(extra=f"created: {bad}")})
+            self.assert_only(self.run_check(data), "ERROR", "AI/plans/P.md",
+                             "created", bad)
+
+    def test_date_empty_passes(self):
+        data = config_data()
+        data["date_keys"] = ["updated"]
+        self.write({"AI/plans/P.md": plan(extra="updated:")})
+        self.assertEqual(self.run_check(data), [])
+
+    def test_name_pattern(self):
+        data = config_data()
+        data["kinds"]["plan"]["name_pattern"] = r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+"
+        self.write({"AI/plans/2026-11-26-garden.md": plan()})
+        self.assertEqual(self.run_check(data), [])
+        self.write({"AI/plans/Garden plan.md": plan()})
+        self.assert_only(self.run_check(data), "ERROR",
+                         "AI/plans/Garden plan.md", "kind plan",
+                         data["kinds"]["plan"]["name_pattern"])
+
+    def test_tag_pattern(self):
+        data = config_data()
+        data["tag_pattern"] = "[a-z0-9]+(-[a-z0-9]+)*"
+        self.write({"AI/plans/P.md": plan(extra="tags: [bee-keeping, garden]")})
+        self.assertEqual(self.run_check(data), [])
+        self.write({"AI/plans/P.md": plan(
+            extra="tags:\n  - garden\n  - Bienen\n  - bee_keeping")})
+        self.assert_only(self.run_check(data), "ERROR", "AI/plans/P.md",
+                         "Bienen", "bee_keeping")
+        self.write({"AI/plans/P.md": plan(extra="tags: Garten-Plan")})
+        self.assert_only(self.run_check(data), "ERROR", "AI/plans/P.md",
+                         "Garten-Plan")
+
+    def test_warn_words_in_description(self):
+        data = config_data()
+        data["warn_words"] = ["und", "für"]
+        self.write({"Workshop/Garden.md": "---\ntype: guide\n"
+                    "description: Alice's beds UND Für the bees\n---\n"})
+        self.assert_only(self.run_check(data), "WARN", "Workshop/Garden.md",
+                         "und", "für")
+        self.write({"Workshop/Garden.md": "---\ntype: guide\n"
+                    "description: Undine's beds, fürther along\n---\n"
+                    "Alice und Bob\n"})
+        self.assertEqual(self.run_check(data), [])
+
+    def test_labels_one_per_property(self):
+        self.write({
+            "Garden.base": "properties:\n  note.updated:\n"
+                           "    displayName: Updated\n",
+            "Work.base": "filters:\n  and: []\nproperties:\n  updated:\n"
+                         "    displayName: \"Last change\"\n"
+                         "  note.status:\n    displayName: Status\n",
+            "Seeds.base": "properties:\n  note.updated:\n"
+                          "    displayName: Updated\n"
+                          "  note.status:\n    displayName: Status\n"})
+        self.assert_only(self.run_check(), "ERROR", "Garden.base",
+                         "updated", '"Updated" in Garden.base, Seeds.base',
+                         '"Last change" in Work.base')
+
+    def test_labels_inline_base_block(self):
+        self.write({
+            "Garden.base": "properties:\n  note.updated:\n"
+                           "    displayName: Updated\n",
+            "Workshop/Beds.md": "# Beds\n\n```base\nproperties:\n"
+                               "  note.updated:\n    displayName: Changed\n"
+                               "```\n\n```yaml\nproperties:\n"
+                               "  note.updated:\n    displayName: Other\n"
+                               "```\n"})
+        self.assert_only(self.run_check(), "ERROR", "Garden.base",
+                         '"Changed" in Workshop/Beds.md',
+                         '"Updated" in Garden.base')
+        self.assertNotIn("Other", self.run_check()[0].message)
+
     def test_fix_writes_progress(self):
         crlf = plan(progress=0, body="- [x] a\n- [ ] b\n").replace("\n", "\r\n")
         lf = plan(body="- [x] a\n- [x] b\n- [ ] c\n- [ ] d\n",

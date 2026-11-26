@@ -55,7 +55,8 @@ names another binary.
 
 The rules live in `.mimir.json` at the vault root. `config.example.json`
 shows one for a made-up vault with two areas. Every top-level key is
-required, and an unknown key is an error that names it.
+required except the three format keys at the end of the table, whose rule is
+off while the key is absent; an unknown key is an error that names it.
 
 | Key | Type | What it is |
 | --- | --- | --- |
@@ -71,6 +72,9 @@ required, and an unknown key is an error that names it.
 | `size_skip_folders` | list of paths | the folders the cap and `split.py` skip |
 | `size_skip_types` | list of `type` values | the types the cap and `split.py` skip |
 | `size_skip_names` | list of patterns | the note names the cap and `split.py` skip |
+| `date_keys` | list of keys, optional | the frontmatter keys whose value must be an unquoted `YYYY-MM-DD` date |
+| `tag_pattern` | regular expression, optional | the form every entry of `tags` must match in full, such as `[a-z0-9]+(-[a-z0-9]+)*` |
+| `warn_words` | list of words, optional | the words that get a WARN in a `description`, matched as whole words in any case |
 
 A kind's entry:
 
@@ -83,6 +87,7 @@ A kind's entry:
 | `progress` | `"checkboxes"` or `null` | its notes carry `progress`, counted from their checkboxes |
 | `template` | path or `null` | the template `new.py` fills and `scaffold.py` creates |
 | `folder` | folder name or `null` | the folder inside an area that holds its notes |
+| `name_pattern` | regular expression or `null` | the form its notes' names must match in full, without `.md`, such as `\d{4}-\d{2}-\d{2} .+` |
 
 ## Commands
 

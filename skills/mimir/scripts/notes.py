@@ -70,6 +70,29 @@ def front_errors(text: str) -> list[str]:
             for index, problem in problems]
 
 
+def front_raw(text: str) -> dict[str, str]:
+    """The unparsed text after ``key:`` of each top-level frontmatter key.
+
+    The value's own line only, stripped; a value on the lines below its key
+    gives "". Without a closed frontmatter the dict is empty.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].rstrip() != "---":
+        return {}
+    for end in range(1, len(lines)):
+        if lines[end].rstrip() == "---":
+            break
+    else:
+        return {}
+    return {_unquote(match.group(1).strip()): (match.group(2) or "").strip()
+            for _, _, match, _ in _top_lines(lines[1:end]) if match}
+
+
+def scalar(text: str):
+    """One YAML scalar or flow list as the frontmatter reader reads it."""
+    return _scalar(text)
+
+
 def links(value) -> list[str]:
     """The target basenames of the wikilinks in a property value or list."""
     if isinstance(value, str):

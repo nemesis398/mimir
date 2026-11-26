@@ -1,18 +1,22 @@
 """Read and validate a vault's ``.mimir.json``.
 
 The top-level keys are the ``Config`` field names, and every one of them is
-required. ``kinds`` maps a kind name to an object with the ``Kind`` fields
-other than ``name``; only ``hub`` and ``has_status`` have no default there.
+required except the format keys in ``OPTIONAL_KEYS``, whose absence turns
+their rule off. ``kinds`` maps a kind name to an object with the ``Kind``
+fields other than ``name``; only ``hub`` and ``has_status`` have no default
+there.
 Any problem raises ``ConfigError`` with a message that names the key.
 """
 
 import json
+import re
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Literal
 
 CONFIG_NAME = ".mimir.json"
 PROGRESS_MODES = ("checkboxes",)
+OPTIONAL_KEYS = ("date_keys", "tag_pattern", "warn_words")
 
 
 class ConfigError(Exception):
@@ -29,6 +33,7 @@ class Kind:
     progress: Literal["checkboxes"] | None
     template: str | None
     folder: str | None
+    name_pattern: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,9 @@ class Config:
     size_skip_folders: tuple[str, ...]
     size_skip_types: frozenset[str]
     size_skip_names: frozenset[str]
+    date_keys: tuple[str, ...] = ()
+    tag_pattern: str | None = None
+    warn_words: tuple[str, ...] = ()
 
 
 def load(vault: Path) -> Config:
@@ -76,7 +84,7 @@ def from_dict(data) -> Config:
         if key not in names:
             raise ConfigError(f"{key}: unknown key")
     for key in names:
-        if key not in data:
+        if key not in data and key not in OPTIONAL_KEYS:
             raise ConfigError(f"{key}: missing key")
     size_cap = data["size_cap_bytes"]
     if isinstance(size_cap, bool) or not isinstance(size_cap, int) \
@@ -95,6 +103,9 @@ def from_dict(data) -> Config:
         size_skip_folders=_strings(data, "size_skip_folders"),
         size_skip_types=frozenset(_strings(data, "size_skip_types")),
         size_skip_names=frozenset(_strings(data, "size_skip_names")),
+        date_keys=_string_list(data.get("date_keys", []), "date_keys"),
+        tag_pattern=_pattern(data.get("tag_pattern"), "tag_pattern"),
+        warn_words=_string_list(data.get("warn_words", []), "warn_words"),
     )
 
 
@@ -103,6 +114,20 @@ def _string_list(value, key: str) -> tuple[str, ...]:
             isinstance(item, str) for item in value):
         raise ConfigError(f"{key}: must be a list of strings")
     return tuple(value)
+
+
+def _pattern(value, key: str) -> str | None:
+    """A regular expression that compiles, or None when value is None."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{key}: must be a non-empty string")
+    try:
+        re.compile(value)
+    except re.error as err:
+        raise ConfigError(f"{key}: not a valid regular expression: {err}") \
+            from None
+    return value
 
 
 def _strings(data: dict, key: str) -> tuple[str, ...]:
@@ -151,4 +176,6 @@ def _kind(name: str, spec) -> Kind:
         progress=progress,
         template=spec.get("template"),
         folder=spec.get("folder"),
+        name_pattern=_pattern(spec.get("name_pattern"),
+                              f"{prefix}.name_pattern"),
     )

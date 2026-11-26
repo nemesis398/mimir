@@ -21,7 +21,8 @@
       "hub": false,
       "progress": "checkboxes",
       "template": "templates/Plan.md",
-      "folder": "plans"
+      "folder": "plans",
+      "name_pattern": "\\d{4}-\\d{2}-\\d{2}-[a-z0-9]+(-[a-z0-9]+)*"
     },
     "plan-part": {
       "has_status": true,
@@ -33,7 +34,8 @@
       "hub": false,
       "progress": null,
       "template": "templates/Meeting.md",
-      "folder": "meetings"
+      "folder": "meetings",
+      "name_pattern": "\\d{4}-\\d{2}-\\d{2} .+"
     }
   },
   "view_properties": ["type", "status", "updated", "description", "progress", "project"],
@@ -41,5 +43,8 @@
   "size_cap_bytes": 40960,
   "size_skip_folders": ["attachments", "Garden/meetings"],
   "size_skip_types": [],
-  "size_skip_names": ["Seed catalog*"]
+  "size_skip_names": ["Seed catalog*"],
+  "date_keys": ["updated", "created"],
+  "tag_pattern": "[a-z0-9]+(-[a-z0-9]+)*",
+  "warn_words": ["und", "oder", "für", "mit", "der", "die", "das"]
 }

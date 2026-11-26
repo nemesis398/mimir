@@ -87,6 +87,37 @@ class ConfigTest(VaultTestCase):
         data["kinds"]["plan"]["name"] = "other"
         self.assert_error_names(data, "kinds.plan.name")
 
+    def test_format_keys_optional(self):
+        self.write_config({k: v for k, v in self.example().items()
+                           if k not in ("date_keys", "tag_pattern",
+                                        "warn_words")})
+        cfg = config.load(self.vault)
+        self.assertEqual((cfg.date_keys, cfg.tag_pattern, cfg.warn_words),
+                         ((), None, ()))
+        self.assertIsNone(cfg.kinds["plan-part"].name_pattern)
+
+    def test_format_keys_load(self):
+        self.write_config(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+        cfg = config.load(self.vault)
+        self.assertIn("updated", cfg.date_keys)
+        self.assertIsInstance(cfg.tag_pattern, str)
+        self.assertTrue(cfg.warn_words)
+        self.assertIsInstance(cfg.kinds["plan"].name_pattern, str)
+
+    def test_format_key_errors_name_the_key(self):
+        data = self.example()
+        data["date_keys"] = "updated"
+        self.assert_error_names(data, "date_keys")
+        data = self.example()
+        data["tag_pattern"] = "[a-z"
+        self.assert_error_names(data, "tag_pattern")
+        data = self.example()
+        data["warn_words"] = [1]
+        self.assert_error_names(data, "warn_words")
+        data = self.example()
+        data["kinds"]["plan"]["name_pattern"] = "(unclosed"
+        self.assert_error_names(data, "kinds.plan.name_pattern")
+
     def test_frozen(self):
         self.write_config(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
         cfg = config.load(self.vault)

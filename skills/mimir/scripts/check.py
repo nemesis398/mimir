@@ -8,12 +8,14 @@ prints one ``LEVEL rel: message`` line per finding and exits 1 on any ERROR
 """
 
 import argparse
+import datetime
 import fnmatch
 import os
 import re
 import stat
 import sys
 import tempfile
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -35,6 +37,13 @@ _NOTE_REF = re.compile(
     r"\bnote\.([A-Za-z_]\w*(?:-[A-Za-z_]\w*)*)"
     r"|\bnote\[\s*[\"']([^\"']+)[\"']\s*\]")
 _ORDER = re.compile(r"^([ \t]*)(?:-[ \t]+)?order:[ \t]*(.*)$")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_PROPERTIES = re.compile(r"^properties[ \t]*:[ \t]*(?:#.*)?$")
+_BASE_KEY = re.compile(
+    r"^[ \t]+(\"[^\"]*\"|'[^']*'|[^\s:#\"'][^:]*?):(?:[ \t]+(.*?))?[ \t]*$")
+_DISPLAY = re.compile(r"^displayName[ \t]*:(?:[ \t]+(.*?))?[ \t]*$")
+_DISPLAY_FLOW = re.compile(
+    r"\bdisplayName[ \t]*:[ \t]*(\"[^\"]*\"|'[^']*'|[^,}]+)")
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,7 @@ def check_vault(vault: Path, cfg: config.Config) -> list[Finding]:
     found += _check_hub_folders(vault, cfg)
     found += _check_bases(vault, ctx.known)
     found += _check_templates(vault, cfg)
+    found += _check_labels(ctx)
     for note in ctx.notes:
         found += _check_note(ctx, note)
     found += _check_progress(ctx)
@@ -144,6 +154,14 @@ class _Context:
                 self.parts[note.rel] = parts
                 for part in parts:
                     self.hub_of.setdefault(part.rel, note)
+        self.tag_re = re.compile(cfg.tag_pattern) if cfg.tag_pattern \
+            else None
+        words = sorted(set(cfg.warn_words), key=len, reverse=True)
+        self.warn_re = re.compile(
+            r"(?<!\w)(?:" + "|".join(map(re.escape, words)) + r")(?!\w)",
+            re.IGNORECASE) if words else None
+        self.name_res = {kind.name: re.compile(kind.name_pattern)
+                         for kind in cfg.kinds.values() if kind.name_pattern}
 
     def _find_parts(self, hub: notes.Note) -> list[notes.Note]:
         prefix = _basename(hub.rel) + PART_SEPARATOR
@@ -218,13 +236,20 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
     is_part = rel in ctx.hub_of
     if is_part and "progress" in front:
         error("a part carries no progress, its hub counts it")
+    found += _check_tags(ctx, note)
+    found += _check_warn_words(ctx, note)
     if ctx.is_template(note):
         return found
+    found += _check_dates(ctx, note, text)
     if not is_part:
         for kind in ctx.kinds_of(note):
             for key in kind.required:
                 if _empty(front.get(key)):
                     error(f"{key} missing, kind {kind.name} requires it")
+            pattern = ctx.name_res.get(kind.name)
+            if pattern and not pattern.fullmatch(_basename(rel)):
+                error(f"name does not match {kind.name_pattern}, the "
+                      f"name_pattern of kind {kind.name}")
     if str(status) == "done":
         for part in ctx.parts.get(rel, []):
             part_status = (part.front or {}).get("status")
@@ -235,6 +260,162 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
     if not _empty(front.get("project")):
         found += _check_project(ctx, rel, front["project"])
     return found
+
+
+def _check_dates(ctx: _Context, note: notes.Note, text: str) -> list[Finding]:
+    """An ERROR for each date key whose value is no unquoted YYYY-MM-DD."""
+    found, raw = [], None
+    for key in ctx.cfg.date_keys:
+        if _empty(note.front.get(key)):
+            continue
+        if raw is None:
+            raw = notes.front_raw(text)
+        value = raw.get(key, "")
+        if not _is_date(value.split(" #", 1)[0].strip()):
+            shown = value or "a value on the lines below it"
+            found.append(Finding(
+                "ERROR", note.rel,
+                f"{key} is {shown}, not an unquoted YYYY-MM-DD date"))
+    return found
+
+
+def _is_date(text: str) -> bool:
+    if not _DATE.fullmatch(text):
+        return False
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _check_tags(ctx: _Context, note: notes.Note) -> list[Finding]:
+    value = note.front.get("tags")
+    if ctx.tag_re is None or _empty(value):
+        return []
+    items = value if isinstance(value, list) else [value]
+    bad = [str(item) for item in items
+           if not ctx.tag_re.fullmatch(str(item))]
+    if not bad:
+        return []
+    return [Finding("ERROR", note.rel,
+                    f"tags {', '.join(bad)} do not match the tag_pattern "
+                    f"{ctx.cfg.tag_pattern}")]
+
+
+def _check_warn_words(ctx: _Context, note: notes.Note) -> list[Finding]:
+    value = note.front.get("description")
+    if ctx.warn_re is None or _empty(value):
+        return []
+    text = " ".join(map(str, value)) if isinstance(value, list) \
+        else str(value)
+    hits = []
+    for match in ctx.warn_re.finditer(text):
+        word = match.group(0).lower()
+        if word not in hits:
+            hits.append(word)
+    if not hits:
+        return []
+    return [Finding("WARN", note.rel,
+                    f"description contains {', '.join(hits)}, from "
+                    f"warn_words")]
+
+
+def _check_labels(ctx: _Context) -> list[Finding]:
+    """An ERROR for each property that two bases label differently."""
+    sources = []
+    for path in _walk(ctx.vault, ".base"):
+        sources.append((path.relative_to(ctx.vault).as_posix(),
+                        path.read_bytes().decode("utf-8", errors="replace")))
+    for note in ctx.notes:
+        sources += [(note.rel, block) for block in _base_blocks(note.body)]
+    labels: dict[str, dict[str, list[str]]] = {}
+    for rel, text in sources:
+        for prop, label in _base_labels(text):
+            where = labels.setdefault(prop, {}).setdefault(label, [])
+            if rel not in where:
+                where.append(rel)
+    found = []
+    for prop, by_label in sorted(labels.items()):
+        if len(by_label) < 2:
+            continue
+        groups = sorted((sorted(rels), label)
+                        for label, rels in by_label.items())
+        shown = prop[len("note."):] if prop.startswith("note.") else prop
+        text = "; ".join(f'"{label}" in {", ".join(rels)}'
+                         for rels, label in groups)
+        found.append(Finding(
+            "ERROR", groups[0][0][0],
+            f"property {shown} has {len(groups)} labels: {text}"))
+    return found
+
+
+def _base_labels(text: str) -> list[tuple[str, str]]:
+    """The (property, displayName) pairs under a base's ``properties:``.
+
+    A bare property name means ``note.<name>``; formulas are left out,
+    since each base defines its own.
+    """
+    pairs, inside, child, current = [], False, None, None
+
+    def add(prop, raw):
+        label = notes.scalar(raw) if raw else None
+        if prop and label is not None and str(label):
+            pairs.append((prop, str(label)))
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            inside, child, current = bool(_PROPERTIES.match(line)), None, None
+            continue
+        if not inside:
+            continue
+        if child is None:
+            child = indent
+        if indent <= child:
+            match = _BASE_KEY.match(line)
+            current = _label_property(str(notes.scalar(match.group(1)))) \
+                if match else None
+            rest = (match.group(2) or "") if match else ""
+            flow = _DISPLAY_FLOW.search(rest) if rest.startswith("{") \
+                else None
+            if flow:
+                add(current, flow.group(1).strip())
+            continue
+        match = _DISPLAY.match(stripped)
+        if match:
+            add(current, match.group(1))
+    return pairs
+
+
+def _label_property(name: str) -> str | None:
+    if name.startswith("formula."):
+        return None
+    return name if "." in name else "note." + name
+
+
+def _base_blocks(body: str) -> list[str]:
+    """The contents of the fenced code blocks of language ``base``."""
+    blocks, fence, is_base, rows = [], None, False, []
+    for line in body.splitlines():
+        match = _FENCE.match(line)
+        if fence is None:
+            if match and not (match.group(1)[0] == "`"
+                              and "`" in match.group(2)):
+                fence, rows = match.group(1), []
+                is_base = match.group(2).strip().split()[:1] == ["base"]
+        elif match and match.group(1)[0] == fence[0] \
+                and len(match.group(1)) >= len(fence) \
+                and not match.group(2).strip():
+            if is_base:
+                blocks.append(textwrap.dedent("\n".join(rows)))
+            fence = None
+        else:
+            rows.append(line)
+    return blocks
 
 
 def _check_project(ctx: _Context, rel: str, value) -> list[Finding]:
