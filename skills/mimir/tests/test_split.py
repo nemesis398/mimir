@@ -109,6 +109,10 @@ Reload the module.
 See [[Home]]."""
 
 
+BLOCKS = ENTITY.replace("Alice's laptop.", "Alice's laptop. ^intro").replace(
+    "Reload the module.", "Reload the module. ^reload")
+
+
 KEEP_PLAN = """---
 type: plan
 status: done
@@ -613,6 +617,66 @@ class SplitCommandTest(VaultTestCase):
                           if "/." in "/" + name], [".mimir.json"])
         self.assertEqual((self.vault / "Other.md").read_text("utf-8"),
                          "[[Garden Shed – Decisions]]\n")
+
+    def test_block_link_maps_to_its_part(self):
+        self.write({"Garden Shed.md": BLOCKS,
+                    "Other.md": "[[Garden Shed#^reload|how]] "
+                                "![[Garden Shed#^reload]]\n"})
+        code, out = self.run_split("Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.vault / "Other.md").read_text("utf-8"),
+                         "[[Garden Shed – Troubleshooting#^reload|how]] "
+                         "![[Garden Shed – Troubleshooting#^reload]]\n")
+
+    def test_heading_links_match_case_insensitively(self):
+        self.write({"Garden Shed.md": ENTITY,
+                    "Other.md": "[[garden shed#troubleshooting]] "
+                                "[[Garden Shed#WIFI DROPS|wifi]]\n"})
+        code, out = self.run_split("Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.vault / "Other.md").read_text("utf-8"),
+                         "[[Garden Shed – Troubleshooting]] "
+                         "[[Garden Shed – Troubleshooting#Wifi drops|wifi]]\n")
+
+    def test_markdown_links_rewritten(self):
+        self.write({"Garden Shed.md": ENTITY,
+                    "Other.md": "[fix](Garden%20Shed.md#Troubleshooting) "
+                                "[wifi](<Garden Shed.md#Wifi drops>) "
+                                '![d](Garden%20Shed.md#Decisions "oak") '
+                                "[web](https://example.org/Garden%20Shed.md"
+                                "#Decisions)\n"})
+        code, out = self.run_split("Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(
+            (self.vault / "Other.md").read_text("utf-8"),
+            "[fix](Garden%20Shed%20–%20Troubleshooting.md) "
+            "[wifi](<Garden Shed – Troubleshooting.md#Wifi drops>) "
+            '![d](Garden%20Shed%20–%20Decisions.md "oak") '
+            "[web](https://example.org/Garden%20Shed.md#Decisions)\n")
+
+    def test_part_link_into_the_hub_rewritten(self):
+        self.write({"Pond plan.md": KEEP_PLAN.replace(
+            "- [ ] Fill it.", "- [ ] Fill it, see [[#Global Constraints]].")})
+        code, out = self.run_split("Pond plan.md", "--force")
+        self.assertEqual(code, 0, out)
+        part = (self.vault / "Pond plan/Pond plan – Phase 2 Fill.md")
+        self.assertIn("see [[Pond plan#Global Constraints]].",
+                      part.read_text("utf-8"))
+
+    def test_links_left_are_printed(self):
+        other = ("[[Garden Shed]] ![[Garden Shed]] [[Garden Shed#Nowhere]] "
+                 "[[Garden Shed#^intro]] [x](Garden%20Shed.md)\n")
+        self.write({"Garden Shed.md": BLOCKS, "Other.md": other})
+        links = ("[[Garden Shed]]", "![[Garden Shed]]",
+                 "[[Garden Shed#Nowhere]]", "[[Garden Shed#^intro]]",
+                 "[x](Garden%20Shed.md)")
+        for args, prefix in ((("--dry-run",), "would leave"), ((), "left")):
+            with self.subTest(prefix=prefix):
+                code, out = self.run_split("Garden Shed.md", "--force", *args)
+                self.assertEqual(code, 0, out)
+                for link in links:
+                    self.assertIn(f"{prefix} Other.md: {link} (", out)
+        self.assertEqual((self.vault / "Other.md").read_text("utf-8"), other)
 
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,

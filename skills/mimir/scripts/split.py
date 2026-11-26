@@ -10,7 +10,10 @@ its heading to the next heading of the same level, and is named
 ``<note> – <heading>``, next to the hub. For a plan the default ``keep`` is
 every section before the first ``Phase `` or ``Task `` heading. Headings
 inside fenced code are text, not sections. Links into the note's sections
-(``[[Note#Heading|shown]]``) are rewritten to the part.
+and blocks (``[[Note#Heading|shown]]``, ``![[Note#^block]]``,
+``[shown](Note.md#Heading)``) are rewritten to the part; headings match
+without regard to case, as in Obsidian. Every other link into the note is
+printed, so nothing changes unseen.
 
 Usage: split.py NOTE [--vault PATH] [--level N] [--keep HEADING]...
                 [--dry-run] [--force]
@@ -24,6 +27,7 @@ import re
 import stat
 import sys
 import tempfile
+from urllib.parse import unquote
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,7 +44,11 @@ _HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 _CLOSING = re.compile(r"(?:^|[ \t]+)#+$")
 # Characters that cannot stand in a note name or a wikilink target.
 _FLATTEN = re.compile(r'[/:\\#^|\[\]*"<>?]')
-_LINK = re.compile(r"\[\[([^\[\]|#\n]*)#([^\[\]|\n]*)((?:\|[^\[\]\n]*)?)\]\]")
+_WIKI = re.compile(
+    r"(!?)\[\[([^\[\]|#\n]*)((?:#[^\[\]|\n]*)?)((?:\|[^\[\]\n]*)?)\]\]")
+_MARKDOWN = re.compile(
+    r'(!?\[[^\[\]\n]*\])\((<[^<>\n]*>|[^()<>\s]+)((?:[ \t]+"[^"\n]*")?)\)')
+_BLOCK = re.compile(r"(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$")
 
 
 class SplitError(Exception):
@@ -82,18 +90,35 @@ def _body_start(lines: list[str]) -> int:
     return 0 if end is None else end + 1
 
 
-def _headings(text: str) -> list[Heading]:
+def _body_lines(text: str):
+    """Yield (offset, line without its ending) for each body line outside fences."""
     lines = text.splitlines(keepends=True)
     start = _body_start(lines)
     offset = sum(len(line) for line in lines[:start])
-    found = []
     for line, fenced in _lines_with_fence(lines[start:]):
-        match = None if fenced else _HEADING.match(line.rstrip("\r\n"))
+        if not fenced:
+            yield offset, line.rstrip("\r\n")
+        offset += len(line)
+
+
+def _headings(text: str) -> list[Heading]:
+    found = []
+    for offset, line in _body_lines(text):
+        match = _HEADING.match(line)
         if match:
             title = _CLOSING.sub("", match.group(2) or "").strip()
             if title:
                 found.append(Heading(offset, len(match.group(1)), title))
-        offset += len(line)
+    return found
+
+
+def _blocks(text: str) -> list[tuple[int, str]]:
+    """(offset, ``^id``) of each block id outside fences."""
+    found = []
+    for offset, line in _body_lines(text):
+        match = None if _HEADING.match(line) else _BLOCK.search(line)
+        if match:
+            found.append((offset, f"^{match.group(1)}"))
     return found
 
 
@@ -145,7 +170,12 @@ def plan_keep(text: str, level: int = 0) -> tuple[str, ...]:
 
 
 def _plan(name: str, text: str, level: int, keep=()):
-    """(hub, parts, sections) where sections maps a heading to its link target."""
+    """(hub, parts, sections) where sections maps a heading to its link target.
+
+    A block id is a key too, as ``^id``. A heading or block that stays in the
+    hub maps to ``name#heading``; the first of two equal headings wins, as
+    in Obsidian.
+    """
     if level == 0:
         level = top_level(text)
     if not 1 <= level <= 6:
@@ -186,16 +216,16 @@ def _plan(name: str, text: str, level: int, keep=()):
         used.add(unique.casefold())
         parts.append((unique, text[cut.offset:end]))
         owner.append((cut.offset, end, unique))
+    anchors = sorted([(head.offset, head.text) for head in heads]
+                     + _blocks(text))
     sections = {}
-    for cut, (_, _, base) in zip(cuts, owner):
-        sections.setdefault(cut.text, base)
-    for head in heads:
+    for offset, key in anchors:
+        target = f"{name}#{key}"
         for start, end, base in owner:
-            if start < head.offset < end and head.depth > level:
-                sections.setdefault(head.text, f"{base}#{head.text}")
-    in_hub = {head.text for head in heads if head.offset < cuts[0].offset}
-    sections = {title: target for title, target in sections.items()
-                if title not in in_hub}
+            if start <= offset < end:
+                heads_part = offset == start and not key.startswith("^")
+                target = base if heads_part else f"{base}#{key}"
+        sections.setdefault(key, target)
     hub = text[:cuts[0].offset] + PARTS_HEADING + "\n" + "".join(
         f"- [[{base}]]\n" for base, _ in parts)
     return hub, parts, sections
@@ -220,45 +250,111 @@ def join_parts(hub: str, parts: list[tuple[str, str]]) -> str:
     return hub[:cut] + "".join(text for _, text in parts)
 
 
-def _resolve_anchor(anchor: str, sections: dict[str, str]) -> str | None:
-    segments = [segment.strip() for segment in anchor.split("#")]
-    if segments[0] in sections:
-        return sections[segments[0]] + "".join(f"#{s}" for s in segments[1:])
-    if len(segments) > 1 and segments[-1] in sections:
-        return sections[segments[-1]]
+def _resolve_anchor(anchor: str, folded: dict[str, str]) -> str | None:
+    segments = [segment.strip().casefold() for segment in anchor.split("#")]
+    if segments[0] in folded:
+        rest = [segment.strip() for segment in anchor.split("#")[1:]]
+        return folded[segments[0]] + "".join(f"#{s}" for s in rest)
+    if len(segments) > 1 and segments[-1] in folded:
+        return folded[segments[-1]]
     return None
+
+
+def _link_target(target: str, anchor: str | None, stem: str, name: str,
+                 own: set[str], folded: dict[str, str]):
+    """("new", target) for a link to rewrite, ("left", reason) for a link
+    into the note that stays, None for a link elsewhere or one that still
+    resolves in its own file."""
+    folder, slash, last = target.rpartition("/")
+    base = last[:-3] if last.casefold().endswith(".md") else last
+    if target:
+        if base.casefold() != name.casefold():
+            return None
+    elif stem.casefold() not in own:
+        return None
+    if anchor is None:
+        return ("left", "links the hub") if target else None
+    new = _resolve_anchor(anchor, folded)
+    if new is None:
+        return "left", "no such heading or block"
+    new_base = new.split("#", 1)[0].casefold()
+    if not target:
+        return None if new_base == stem.casefold() else ("new", new)
+    if new_base == name.casefold():
+        return "left", "stays in the hub"
+    return "new", f"{folder}/{new}" if slash else new
+
+
+def _md_quote(text: str) -> str:
+    """text fit for a Markdown link destination, with the fewest escapes."""
+    for char, code in (("%", "%25"), (" ", "%20"), ("(", "%28"),
+                       (")", "%29"), ("<", "%3C"), (">", "%3E")):
+        text = text.replace(char, code)
+    return text
+
+
+def _scan_text(text: str, stem: str, name: str, sections: dict[str, str]):
+    """(rewrites, left) for one note's text, outside fenced code.
+
+    rewrites holds the (old, new) links; left holds (link, reason) for each
+    link into the note that is not rewritten.
+    """
+    folded = {}
+    for key, target in sections.items():
+        folded.setdefault(key.casefold(), target)
+    own = {name.casefold()} | {target.split("#", 1)[0].casefold()
+                               for target in sections.values()}
+    rewrites, left = [], []
+
+    def add(item, into):
+        if item not in into:
+            into.append(item)
+
+    for line, fenced in _lines_with_fence(text.splitlines(keepends=True)):
+        if fenced:
+            continue
+        for match in _WIKI.finditer(line):
+            bang, target, anchor, alias = match.groups()
+            old = match.group(0)[len(bang):]
+            found = _link_target(target.strip(), anchor[1:] if anchor else None,
+                                 stem, name, own, folded)
+            if found is None:
+                continue
+            if found[0] == "new":
+                add((old, f"[[{found[1]}{alias}]]"), rewrites)
+            elif bang and found[1] == "links the hub":
+                add((bang + old, "embeds the hub, not the parts"), left)
+            else:
+                add((bang + old, found[1]), left)
+        for match in _MARKDOWN.finditer(line):
+            shown, dest, title = match.groups()
+            angle = dest.startswith("<")
+            raw = dest[1:-1] if angle else dest
+            if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", raw):
+                continue
+            path, hashed, anchor = unquote(raw).partition("#")
+            found = _link_target(path.strip(), anchor if hashed else None,
+                                 stem, name, own, folded)
+            if found is None:
+                continue
+            if found[0] == "left":
+                add((match.group(0), found[1]), left)
+                continue
+            new_path, hashed, new_anchor = found[1].partition("#")
+            if not path or path.casefold().endswith(".md"):
+                new_path += ".md"
+            if angle:
+                new_dest = f"<{new_path}{hashed}{new_anchor}>"
+            else:
+                new_dest = _md_quote(new_path) + hashed + _md_quote(new_anchor)
+            add((match.group(0), f"{shown}({new_dest}{title})"), rewrites)
+    return rewrites, left
 
 
 def _text_rewrites(text: str, stem: str, name: str,
                    sections: dict[str, str]) -> list[tuple[str, str]]:
     """The (old, new) links in one note's text, outside fenced code."""
-    own = {name} | {target.split("#", 1)[0] for target in sections.values()}
-    found = []
-    for line, fenced in _lines_with_fence(text.splitlines(keepends=True)):
-        if fenced:
-            continue
-        for match in _LINK.finditer(line):
-            target, anchor, alias = match.groups()
-            target = target.strip()
-            folder, slash, last = target.rpartition("/")
-            base = last[:-3] if last.endswith(".md") else last
-            if target:
-                if base != name:
-                    continue
-            elif stem not in own:
-                continue
-            new_target = _resolve_anchor(anchor, sections)
-            if new_target is None:
-                continue
-            if not target:
-                if new_target.split("#", 1)[0] == stem:
-                    continue
-            elif slash:
-                new_target = f"{folder}/{new_target}"
-            pair = (match.group(0), f"[[{new_target}{alias}]]")
-            if pair not in found:
-                found.append(pair)
-    return found
+    return _scan_text(text, stem, name, sections)[0]
 
 
 def _markdown_files(vault: Path):
@@ -269,22 +365,31 @@ def _markdown_files(vault: Path):
                 yield Path(root) / file
 
 
-def heading_link_rewrites(vault: Path, name: str,
-                          sections: dict[str, str]) -> list[tuple[Path, str, str]]:
-    """Every (file, old link, new link) that points into a split section.
-
-    sections maps a heading of the note called name to its new link target,
-    a part's basename, or ``part#subheading`` for a heading inside a part.
+def link_scan(vault: Path, name: str, sections: dict[str, str]):
+    """(rewrites, left) over the vault: (file, old, new) for each link to
+    rewrite and (file, link, reason) for each link into the note that stays.
     """
-    found = []
+    rewrites, left = [], []
     for path in _markdown_files(Path(vault)):
         try:
             text = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for old, new in _text_rewrites(text, path.name[:-3], name, sections):
-            found.append((path, old, new))
-    return found
+        found, stays = _scan_text(text, path.name[:-3], name, sections)
+        rewrites += [(path, old, new) for old, new in found]
+        left += [(path, link, reason) for link, reason in stays]
+    return rewrites, left
+
+
+def heading_link_rewrites(vault: Path, name: str,
+                          sections: dict[str, str]) -> list[tuple[Path, str, str]]:
+    """Every (file, old link, new link) that points into a split section.
+
+    sections maps a heading of the note called name to its new link target,
+    a part's basename, or ``part#subheading`` for a heading inside a part;
+    ``^id`` keys are block ids. Headings match without regard to case.
+    """
+    return link_scan(vault, name, sections)[0]
 
 
 def write_atomic(path: Path, data: bytes) -> None:
@@ -450,15 +555,23 @@ def main(argv: list[str] | None = None) -> int:
                   f"({len(part.encode('utf-8'))} bytes)")
         print(f"would write the hub {new_rel} "
               f"({len(hub.encode('utf-8'))} bytes)")
-        planned = []
-        for file, old, new in heading_link_rewrites(vault, name, sections):
+        planned, left = [], []
+        found, stays = link_scan(vault, name, sections)
+        for file, old, new in found:
             if file != path:
                 planned.append((file.relative_to(vault).as_posix(), old, new))
+        for file, link, reason in stays:
+            if file != path:
+                left.append((file.relative_to(vault).as_posix(), link, reason))
         for base, part in [(name, hub), *parts]:
-            for old, new in _text_rewrites(part, base, name, sections):
-                planned.append((f"{prefix}{base}.md", old, new))
+            found, stays = _scan_text(part, base, name, sections)
+            planned += [(f"{prefix}{base}.md", old, new) for old, new in found]
+            left += [(f"{prefix}{base}.md", link, reason)
+                     for link, reason in stays]
         for file, old, new in planned:
             print(f"would rewrite {file}: {old} -> {new}")
+        for file, link, reason in left:
+            print(f"would leave {file}: {link} ({reason})")
         return 0
 
     created = []
@@ -503,14 +616,18 @@ def main(argv: list[str] | None = None) -> int:
         write_atomic(path, hub.encode("utf-8"))
         hub_written = True
         print(f"wrote the hub {new_rel}")
+        rewrites, left = link_scan(vault, name, sections)
         by_file = {}
-        for rewrite in heading_link_rewrites(vault, name, sections):
+        for rewrite in rewrites:
             by_file.setdefault(rewrite[0], []).append(rewrite)
         for file, group in by_file.items():
             apply_rewrites(group)
             for _, old, new in group:
                 print(f"rewrote {file.relative_to(vault).as_posix()}: "
                       f"{old} -> {new}")
+        for file, link, reason in left:
+            print(f"left {file.relative_to(vault).as_posix()}: {link} "
+                  f"({reason})")
     except (obsidian_cli.CliError, SplitError) as err:
         state = ("the hub is written" if hub_written
                  else f"{new_rel} is not overwritten")
