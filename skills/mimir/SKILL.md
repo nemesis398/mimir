@@ -138,12 +138,18 @@ What a finding asks for:
 ### new
 
 `new.py` makes a kind's note where "Where a note goes" puts it, from the
-kind's `template` with `{{title}}` (or `{{name}}`) and `{{date}}` filled, the placeholders Obsidian's Templates plugin fills too. `--parent NAME`
-sets `project: "[[NAME]]"` and needs a template with frontmatter. It
-refuses a name that exists anywhere in the
-vault, a name with one of `/ \ : # ^ | [ ] * " < > ?`, an unknown kind or
-area, and a vault where `obsidian version` fails. It exits 0 and prints the
-path, 1 on a refusal, 2 on a config error.
+kind's `template` with `{{title}}` (or `{{name}}`) and `{{date}}` filled,
+the placeholders Obsidian's Templates plugin fills too. `--parent NAME` sets
+`project` to the one-item list `"[[NAME]]"` and needs a template with
+frontmatter. It refuses a name that exists anywhere in the vault, a name
+with one of `/ \ : # ^ | [ ] * " < > ?`, an unknown kind or area, and a
+vault where `obsidian version` fails. It exits 0 and prints the path, 1 on
+a refusal, 2 on a config error.
+
+A base's New button in the app is the other way in: it fills `type` and
+`status` from the view, but Obsidian puts the file wherever its "default
+location for new notes" says, often the vault root. Move such a note into
+its area with `obsidian move`, then run `check.py`.
 
 ### split
 
