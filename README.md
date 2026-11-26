@@ -22,7 +22,8 @@ agent and the checker never disagree.
 - **`check.py`** checks the vault: states, unknown keys, required keys,
   `progress` against the counted checkboxes, `project` links, folders
   without their hub, the root, properties that a `.base` reads, the size
-  cap and the kinds' templates. `--fix` writes the counted `progress`.
+  cap and the kinds' templates. One `displayName` per property across the
+  bases is required, except for `file.name`. `--fix` writes the counted `progress`.
 - **`new.py`** starts a note of a kind from its template, in its folder.
 - **`split.py`** splits a note into a hub and parts in the note's own
   folder, moving its text byte for byte, and rewrites the links to its

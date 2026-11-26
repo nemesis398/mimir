@@ -27,7 +27,8 @@ follow [Semantic Versioning](https://semver.org/).
   (unquoted `YYYY-MM-DD` dates), `tag_pattern` (every tag), `warn_words`
   (a WARN on those words in a `description`) and a kind's `name_pattern`
   (its notes' names). One `displayName` per property across all `.base`
-  files and `base` code blocks is always checked.
+  files and `base` code blocks is always checked, except `file.name`, whose
+  column may carry a label per base.
 - `scripts/split.py`, which splits a long note into a hub and parts, moving
   its text byte for byte and rewriting the links to its sections. Every
   split note lives in its own folder, `<dir>/<name>/<name>.md`, with its

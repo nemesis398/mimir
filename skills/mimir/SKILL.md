@@ -108,7 +108,8 @@ What a finding asks for:
   with `obsidian rename` to the pattern's form; propose the name first.
 - `property ... has 2 labels`: the bases and `base` code blocks give one
   property different `displayName` values. Pick one with the user and set
-  it in every base the finding names.
+  it in every base the finding names. `file.name` is exempt: the name
+  column may carry a label per base.
 - WARN `description contains ..., from warn_words`: rewrite the
   description in the vault's language for property values.
 - WARN `... bytes, over the cap`: split the note, unless it is an active

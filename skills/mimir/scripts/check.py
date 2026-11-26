@@ -322,7 +322,10 @@ def _check_warn_words(ctx: _Context, note: notes.Note) -> list[Finding]:
 
 
 def _check_labels(ctx: _Context) -> list[Finding]:
-    """An ERROR for each property that two bases label differently."""
+    """An ERROR for each property that two bases label differently.
+
+    `file.name` is exempt: the name column says what each base lists.
+    """
     sources = []
     for path in _walk(ctx.vault, ".base"):
         sources.append((path.relative_to(ctx.vault).as_posix(),
@@ -337,7 +340,7 @@ def _check_labels(ctx: _Context) -> list[Finding]:
                 where.append(rel)
     found = []
     for prop, by_label in sorted(labels.items()):
-        if len(by_label) < 2:
+        if len(by_label) < 2 or prop == "file.name":
             continue
         groups = sorted((sorted(rels), label)
                         for label, rels in by_label.items())

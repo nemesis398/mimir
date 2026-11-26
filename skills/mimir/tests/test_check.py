@@ -327,6 +327,14 @@ class CheckTest(VaultTestCase):
                          "updated", '"Updated" in Garden.base, Seeds.base',
                          '"Last change" in Work.base')
 
+    def test_file_name_labels_may_differ(self):
+        self.write({
+            "Garden.base": "properties:\n  file.name:\n"
+                           "    displayName: Plan\n",
+            "Work.base": "properties:\n  file.name:\n"
+                         "    displayName: Session\n"})
+        self.assertEqual(self.run_check(), [])
+
     def test_labels_inline_base_block(self):
         self.write({
             "Garden.base": "properties:\n  note.updated:\n"
