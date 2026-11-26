@@ -662,6 +662,29 @@ class SplitCommandTest(VaultTestCase):
             '![d](Garden%20Shed%20–%20Decisions.md "oak") '
             "[web](https://example.org/Garden%20Shed.md#Decisions)\n")
 
+    def test_path_link_to_another_note_of_that_name_kept(self):
+        other = ("[[Other/Garden Shed#Decisions]] "
+                 "[d](Other/Garden%20Shed.md#Decisions) "
+                 "[[Garden Shed#Decisions]]\n")
+        self.write({"Garden Shed.md": ENTITY,
+                    "Other/Garden Shed.md": "# Elsewhere\n\n## Decisions\n",
+                    "A.md": other})
+        code, out = self.run_split("Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.vault / "A.md").read_text("utf-8"),
+                         "[[Other/Garden Shed#Decisions]] "
+                         "[d](Other/Garden%20Shed.md#Decisions) "
+                         "[[Garden Shed – Decisions]]\n")
+
+    def test_path_link_to_the_split_note_rewritten(self):
+        self.write({"Computer/Garden Shed.md": ENTITY,
+                    "Computer/B.md": "[[Computer/Garden Shed#Decisions]] "
+                                     "[r](Garden%20Shed.md#Decisions)\n"})
+        code, out = self.run_split("Computer/Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        text = (self.vault / "Computer/B.md").read_text("utf-8")
+        self.assertNotIn("#Decisions", text, out)
+
     def test_part_link_into_the_hub_rewritten(self):
         self.write({"Pond plan.md": KEEP_PLAN.replace(
             "- [ ] Fill it.", "- [ ] Fill it, see [[#Global Constraints]].")})

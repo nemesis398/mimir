@@ -46,7 +46,7 @@ follow [Semantic Versioning](https://semver.org/).
   template in its folder, keeping the template's line endings, and `scripts/scaffold.py`, which creates the
   missing templates.
 - `scripts/obsidian_cli.py`, which calls the Obsidian CLI in the vault's
-  directory and treats `Error:` on stdout as a failure at exit 0.
+  directory and treats `Error:` on stdout or stderr as a failure at exit 0.
 - The `mimir` skill: where a note goes, the four commands, and the red
   lines for moving and splitting.
 - `README.md`, a complete `config.example.json`, and evals for filing a

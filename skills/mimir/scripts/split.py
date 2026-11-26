@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import fnmatch
 import os
+import posixpath
 import re
 import stat
 import sys
@@ -272,15 +273,33 @@ def _resolve_anchor(anchor: str, folded: dict[str, str]) -> str | None:
     return None
 
 
+def _names_the_note(folder: str, base: str, here: str,
+                    paths: set[str] | None) -> bool:
+    """Whether a link that names folder/base points at the split note.
+
+    paths holds the note's vault-relative paths without ``.md``, casefolded;
+    the link may be vault-relative or relative to the linking file's folder
+    here. None means the caller knows no paths and the name alone decides.
+    """
+    if paths is None:
+        return True
+    tries = {f"{folder}/{base}", posixpath.join(here, folder, base)}
+    return any(posixpath.normpath(t).casefold() in paths for t in tries)
+
+
 def _link_target(target: str, anchor: str | None, stem: str, name: str,
-                 own: set[str], folded: dict[str, str]):
+                 own: set[str], folded: dict[str, str], here: str = "",
+                 paths: set[str] | None = None):
     """("new", target) for a link to rewrite, ("left", reason) for a link
     into the note that stays, None for a link elsewhere or one that still
-    resolves in its own file."""
+    resolves in its own file. A link that names a folder counts only when
+    the path is the note's own (see _names_the_note)."""
     folder, slash, last = target.rpartition("/")
     base = last[:-3] if last.casefold().endswith(".md") else last
     if target:
         if base.casefold() != name.casefold():
+            return None
+        if slash and not _names_the_note(folder, base, here, paths):
             return None
     elif stem.casefold() not in own:
         return None
@@ -305,7 +324,8 @@ def _md_quote(text: str) -> str:
     return text
 
 
-def _scan_text(text: str, stem: str, name: str, sections: dict[str, str]):
+def _scan_text(text: str, stem: str, name: str, sections: dict[str, str],
+               here: str = "", paths: set[str] | None = None):
     """(rewrites, left) for one note's text, outside fenced code.
 
     rewrites holds the (old, new) links; left holds (link, reason) for each
@@ -329,7 +349,7 @@ def _scan_text(text: str, stem: str, name: str, sections: dict[str, str]):
             bang, target, anchor, alias = match.groups()
             old = match.group(0)[len(bang):]
             found = _link_target(target.strip(), anchor[1:] if anchor else None,
-                                 stem, name, own, folded)
+                                 stem, name, own, folded, here, paths)
             if found is None:
                 continue
             if found[0] == "new":
@@ -346,7 +366,7 @@ def _scan_text(text: str, stem: str, name: str, sections: dict[str, str]):
                 continue
             path, hashed, anchor = unquote(raw).partition("#")
             found = _link_target(path.strip(), anchor if hashed else None,
-                                 stem, name, own, folded)
+                                 stem, name, own, folded, here, paths)
             if found is None:
                 continue
             if found[0] == "left":
@@ -377,17 +397,28 @@ def _markdown_files(vault: Path):
                 yield Path(root) / file
 
 
-def link_scan(vault: Path, name: str, sections: dict[str, str]):
+def link_scan(vault: Path, name: str, sections: dict[str, str],
+              rels: list[str] | None = None):
     """(rewrites, left) over the vault: (file, old, new) for each link to
     rewrite and (file, link, reason) for each link into the note that stays.
+
+    rels are the note's vault-relative paths (before and after its move);
+    with them, a link that names a folder counts only when it names one of
+    them.
     """
+    paths = None if rels is None else {
+        posixpath.normpath(r[:-3] if r.endswith(".md") else r).casefold()
+        for r in rels}
     rewrites, left = [], []
-    for path in _markdown_files(Path(vault)):
+    vault = Path(vault)
+    for path in _markdown_files(vault):
         try:
             text = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        found, stays = _scan_text(text, path.name[:-3], name, sections)
+        here = path.parent.relative_to(vault).as_posix()
+        found, stays = _scan_text(text, path.name[:-3], name, sections,
+                                  "" if here == "." else here, paths)
         rewrites += [(path, old, new) for old, new in found]
         left += [(path, link, reason) for link, reason in stays]
     return rewrites, left
@@ -576,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"would write the hub {new_rel} "
               f"({len(hub.encode('utf-8'))} bytes)")
         planned, left = [], []
-        found, stays = link_scan(vault, name, sections)
+        found, stays = link_scan(vault, name, sections, [rel, new_rel])
         for file, old, new in found:
             if file != path:
                 planned.append((file.relative_to(vault).as_posix(), old, new))
@@ -584,7 +615,9 @@ def main(argv: list[str] | None = None) -> int:
             if file != path:
                 left.append((file.relative_to(vault).as_posix(), link, reason))
         for base, part in [(name, hub), *parts]:
-            found, stays = _scan_text(part, base, name, sections)
+            found, stays = _scan_text(part, base, name, sections,
+                                  home, {posixpath.normpath(r[:-3]).casefold()
+                                         for r in (rel, new_rel)})
             planned += [(f"{prefix}{base}.md", old, new) for old, new in found]
             left += [(f"{prefix}{base}.md", link, reason)
                      for link, reason in stays]
@@ -636,7 +669,7 @@ def main(argv: list[str] | None = None) -> int:
         write_atomic(path, hub.encode("utf-8"))
         hub_written = True
         print(f"wrote the hub {new_rel}")
-        rewrites, left = link_scan(vault, name, sections)
+        rewrites, left = link_scan(vault, name, sections, [rel, new_rel])
         by_file = {}
         for rewrite in rewrites:
             by_file.setdefault(rewrite[0], []).append(rewrite)

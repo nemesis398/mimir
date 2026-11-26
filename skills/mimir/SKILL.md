@@ -82,7 +82,8 @@ and wait for the user before you move a note that already exists.
 into each note whose kind has `"progress": "checkboxes"`, changing only that
 line, then rewrites each frontmatter into the style, then checks. Progress
 is the share of `[x]` and `[-]` boxes among all boxes outside fenced code,
-as a whole number; a hub counts its parts too, and a part carries no
+as a whole number; a hub counts its parts too, and the parts of its
+parts at any depth, and a part carries no
 `progress` of its own. A `done` note has 100 whatever its boxes say, and a
 `cancelled` note's `progress` is not checked.
 
@@ -92,8 +93,11 @@ quotes) and puts the keys in `key_order`. No value, comment or line ending
 changes, and the body stays byte for byte. A frontmatter it cannot read
 safely, such as a nested or multi-line flow list, an anchor, or a comment
 between keys it would move, stays as it is and gets
-`style: not rewritten` with the reason. `--fix` prints each path it
-changed.
+`style: not rewritten` with the reason. `--fix` prints each path as it
+writes it. A note that is a symlink is left as it is, with a WARN. A write
+that fails is an ERROR naming the note, and `check.py` then exits 1, even
+with `--report-only`. A symlink to a missing file, or a note that cannot
+be read, is a WARN and is skipped.
 
 What a finding asks for:
 
@@ -197,7 +201,7 @@ that exists. Run `--dry-run` first.
   `obsidian move path=<old> to=<new>`, `obsidian rename path=...`,
   `obsidian delete path=...`, each with `< /dev/null`. Never `mv`, `rm` or a
   rename in the shell, because only Obsidian rewrites the links. An `Error:`
-  on stdout is a failure even at exit 0: stop there.
+  on stdout or stderr is a failure even at exit 0: stop there.
 - **Never split an active plan.** A plan over the cap is split right after
   it is written or once it is closed, never while it runs.
 - **Text moves, it is never rewritten.** A split or a move keeps every

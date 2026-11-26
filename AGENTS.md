@@ -31,7 +31,7 @@ the shape.
    `progress` line, then the frontmatter style (flow lists, key order).
 3. **Notes move through the Obsidian CLI.** A command that moves, renames
    or creates a note calls `obsidian` with `path=`, reads stdin from
-   `/dev/null`, and treats `Error:` on stdout as a failure even at exit 0.
+   `/dev/null`, and treats `Error:` on stdout or stderr as a failure even at exit 0.
 4. **Text moves, it is never rewritten.** A split keeps every byte of the
    note, and joining the parts gives the original back.
 5. **Tests first.** A change to a script comes with its test, and the suite
