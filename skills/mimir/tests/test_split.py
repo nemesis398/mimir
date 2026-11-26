@@ -416,7 +416,9 @@ class SplitCommandTest(VaultTestCase):
         self.assertEqual(code, 0, out)
         self.assertNotIn("move", [c[0] for c in self.calls()])
         hub, parts = self.read_split("Garden/Work plan", "Work plan")
-        self.assertEqual(split.join_parts(hub, parts), PHASE_PLAN)
+        front = "---\ntype: plan-part\nstatus: done\n---\n"
+        bare = [(b, part.removeprefix(front)) for b, part in parts]
+        self.assertEqual(split.join_parts(hub, bare), PHASE_PLAN)
 
     def test_move_error_stops(self):
         self.write({"Work plan.md": PHASE_PLAN})
@@ -436,7 +438,11 @@ class SplitCommandTest(VaultTestCase):
         self.assertIn("## Review Focus\n", hub)
         self.assertEqual([b for b, _ in parts],
                          ["Pond plan – Phase 1 Dig", "Pond plan – Phase 2 Fill"])
-        self.assertEqual(split.join_parts(hub, parts), KEEP_PLAN)
+        front = "---\ntype: plan-part\nstatus: done\n---\n"
+        for _, part in parts:
+            self.assertTrue(part.startswith(front + "## Phase "), part)
+        bare = [(b, part[len(front):]) for b, part in parts]
+        self.assertEqual(split.join_parts(hub, bare), KEEP_PLAN)
 
     def test_keep_flag(self):
         self.write({"Garden Shed.md": ENTITY})

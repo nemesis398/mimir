@@ -116,6 +116,15 @@ def part_name(name: str, heading: str) -> str:
 PLAN_STARTS = ("Phase ", "Task ")
 
 
+def plan_part_front(cfg: config.Config, status) -> str:
+    """The frontmatter of a plan's part: the part type and the hub's status."""
+    kind = cfg.kinds.get("plan-part")
+    lines = [f"type: {kind.note_type if kind else 'plan-part'}"]
+    if status:
+        lines.append(f"status: {status}")
+    return "---\n" + "\n".join(lines) + "\n---\n"
+
+
 def plan_keep(text: str, level: int = 0) -> tuple[str, ...]:
     """The headings at level before the first one that starts a phase or task.
 
@@ -377,6 +386,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             keep = ()
         hub, parts, sections = _plan(name, text, args.level, keep)
+        if is_plan:
+            parts = [(base, plan_part_front(cfg, status) + part)
+                     for base, part in parts]
         taken = {p.name[:-3].casefold() for p in _markdown_files(vault)}
         clash = [base for base, _ in parts if base.casefold() in taken]
         if clash:
