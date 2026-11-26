@@ -145,7 +145,8 @@ the placeholders Obsidian's Templates plugin fills too. `--parent NAME` sets
 frontmatter. It refuses a name that exists anywhere in the vault, a name
 with one of `/ \ : # ^ | [ ] * " < > ?`, an unknown kind or area, and a
 vault where `obsidian version` fails. It exits 0 and prints the path, 1 on
-a refusal, 2 on a config error.
+a refusal, 2 on a config error or when the app has another vault open
+(`obsidian vault info=path` must name `--vault`).
 
 A base's New button in the app is the other way in: it fills `type` and
 `status` from the view, but Obsidian puts the file wherever its "default
@@ -164,14 +165,22 @@ leading sections named with `--keep HEADING` (repeatable), then a
 `## Parts` list. For a plan, the default is to keep every section before
 the first `Phase` or `Task` heading, such as `## Global Constraints`. Each
 part is one section, named `<note> – <heading>` with the en dash kept, and
-sits next to the hub. Links to `[[Note#Heading]]` are rewritten to the
-part.
+sits next to the hub. Links into a moved section are rewritten to its part:
+`[[Note#Heading]]` (heading matched regardless of case, as Obsidian does),
+`[[Note#^block]]`, the same as embeds, and Markdown links
+`(Note.md#Heading)`. Every link into the note that stays as it is gets a
+line, `would leave FILE: LINK (reason)` in a dry run and `left FILE: LINK
+(reason)` in a real run; read them, since a plain `[[Note]]` now opens the
+hub.
 
 Always run `--dry-run` first and show the user its output. `split.py`
 refuses a note under the size cap unless `--force` is given, a note the
 config skips (`size_skip_folders`, `size_skip_types`, `size_skip_names`), a
-plan with `status: active`, a part name that exists anywhere, and a vault
-where the Obsidian app does not answer. A split of a plan writes each
+plan with `status: active`, a part name that exists anywhere, a note that
+is a symlink, and a vault where the Obsidian app does not answer (exit 1)
+or has another vault open (exit 2). It re-reads the note after the move
+and before the hub write and stops, naming the note, if it changed; a
+failed write lists the parts created before it. A split of a plan writes each
 part's frontmatter itself (`type: plan-part` and the hub's `status`, no
 `progress`); do not add it. Then run `check.py --fix` for the hub's `progress`.
 

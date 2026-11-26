@@ -105,7 +105,7 @@ then the current directory; the others use the current directory.
 | --- | --- |
 | `check.py [--fix] [--report-only]` | `--fix` writes `progress` and the frontmatter style; prints one `LEVEL rel: message` line per finding; exits 1 on an ERROR unless `--report-only`, 2 on a config error |
 | `new.py KIND NAME --area AREA [--parent NAME]` | creates the note and prints its path; `--parent` sets `project` to a one-item list holding `"[[NAME]]"` |
-| `split.py NOTE [--level N] [--keep HEADING] [--dry-run] [--force]` | moves the note to `<dir>/<name>/<name>.md` and splits it there, at the lowest heading depth that repeats or at `--level`; the sections named with `--keep` (for a plan, those before the first `Phase` or `Task` heading) stay in the hub; refuses a note under the cap without `--force`, a skipped note and an active plan |
+| `split.py NOTE [--level N] [--keep HEADING] [--dry-run] [--force]` | moves the note to `<dir>/<name>/<name>.md` and splits it there, at the lowest heading depth that repeats or at `--level`; the sections named with `--keep` (for a plan, those before the first `Phase` or `Task` heading) stay in the hub; refuses a note under the cap without `--force`, a skipped note, a symlink and an active plan; exits 2 when the app has another vault open; prints each link into the note it leaves as it is |
 | `scaffold.py [--dry-run]` | creates each missing template and never touches an existing file |
 
 The scripts sit in `skills/mimir/scripts/`. Run them as `python3 -B`.
