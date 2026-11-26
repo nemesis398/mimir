@@ -36,3 +36,45 @@ class VaultTestCase(unittest.TestCase):
 
     def write(self, files: dict) -> Path:
         return write_vault(self.vault, files)
+
+
+def config_data() -> dict:
+    """A fresh config object for the checker tests, Alice's made-up vault."""
+    return {
+        "areas": ["Workshop", "Computer", "AI"],
+        "system_folders": ["templates", "attachments"],
+        "root_allowlist": ["Home.md", "*.base"],
+        "states": ["planned", "active", "paused", "done", "cancelled"],
+        "states_by_type": {"computer": ["stale"]},
+        "kinds": {
+            "project": {
+                "has_status": True,
+                "required": ["description"],
+                "hub": True,
+                "progress": None,
+                "template": None,
+                "folder": None,
+            },
+            "plan": {
+                "has_status": True,
+                "required": ["description"],
+                "hub": False,
+                "progress": "checkboxes",
+                "template": None,
+                "folder": "plans",
+            },
+        },
+        "view_properties": ["type", "status", "domain", "updated",
+                            "description", "progress", "project"],
+        "allowed_keys": ["created", "machine", "tags", "aliases"],
+        "size_cap_bytes": 40960,
+        "size_skip_folders": ["AI/specs"],
+        "size_skip_types": ["transaktion"],
+        "size_skip_names": ["*.excalidraw.md"],
+    }
+
+
+def make_config(data: dict | None = None):
+    """The Config built from data, by default from config_data()."""
+    import config
+    return config.from_dict(config_data() if data is None else data)
