@@ -1,12 +1,21 @@
 import contextlib
 import io
 import json
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from helpers import VaultTestCase, config_data, make_config
 
 import check
+import notes
+
+try:
+    import yaml
+except ImportError:  # the YAML cross-check is optional
+    yaml = None
 
 
 def plan(status="active", progress=None, body="", extra=""):
@@ -673,6 +682,113 @@ class CheckTest(VaultTestCase):
         self.assert_only(hub, "ERROR", "AI/plans/Big.md",
                          "Big – Eins – Tief", "active")
 
+    def outside_file(self, text: str) -> Path:
+        """A file outside the vault holding text, removed after the test."""
+        folder = Path(tempfile.mkdtemp(prefix="mimir-outside-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        target = folder / "target.md"
+        target.write_bytes(text.encode("utf-8"))
+        return target
+
+    def test_fix_skips_symlinked_note(self):
+        text = plan(body="- [x] a\n- [ ] b\n", extra="tags: [a, b]")
+        target = self.outside_file(text)
+        link = self.vault / "AI/plans/L.md"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+        code, out, err = self.run_cli_err("--fix")
+        self.assertEqual(code, 1)
+        self.assertIn("WARN AI/plans/L.md: progress: not written, a symlink",
+                      err)
+        self.assertIn("WARN AI/plans/L.md: style: not rewritten, a symlink",
+                      err)
+        self.assertNotIn("fixed", err)
+        self.assertIn("ERROR AI/plans/L.md: progress missing", out)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_bytes(), text.encode("utf-8"))
+
+    def test_progress_after_multiline_status(self):
+        statuses = [
+            "status: active",
+            "status: active\n  and more",
+            "status:\n  active",
+            'status: "act\n  ive"',
+            "status: 'act\n  ive'",
+            "status: >-\n  act\n  ive",
+            "status: |\n  active",
+            "status: |-\n  act\n\n  ive",
+            "status: |+\n  active\n",
+            "status: >+\n  active\n\n",
+            "status:\n  - active\n  - paused",
+            "status:\n- active",
+        ]
+        afters = ["", "description: A plan", "\ndescription: A plan",
+                  "# a comment\ndescription: A plan"]
+        cases = {}
+        for i, status in enumerate(statuses):
+            for j, after in enumerate(afters):
+                for crlf in (False, True):
+                    front = "type: plan\n" + status + "\n" + after
+                    if not front.endswith("\n"):
+                        front += "\n"
+                    text = "---\n" + front + "---\n- [x] a\n- [ ] b\n"
+                    if crlf:
+                        text = text.replace("\n", "\r\n")
+                    cases[f"AI/plans/S{i}-{j}-{int(crlf)}.md"] = text
+        self.write(cases)
+        data = config_data()
+        data["kinds"]["plan"]["required"] = []
+        check.fix_progress(self.vault, make_config(data))
+        for rel, old in cases.items():
+            with self.subTest(rel=rel, text=old):
+                new = (self.vault / rel).read_bytes().decode("utf-8")
+                ending = "\r\n" if "\r\n" in old else "\n"
+                line = "progress: 50" + ending
+                self.assertEqual(new.count(line), 1)
+                self.assertEqual(new.replace(line, "", 1), old)
+                old_front, old_body = notes.parse_front(old)
+                new_front, new_body = notes.parse_front(new)
+                self.assertEqual(new_front, {**old_front, "progress": 50})
+                self.assertEqual(new_body, old_body)
+                self.assertEqual(notes.front_errors(new),
+                                 notes.front_errors(old))
+                if yaml is not None:
+                    self.assertEqual(_yaml_front(new),
+                                     {**_yaml_front(old), "progress": 50})
+
+    def test_fix_reports_each_write_and_oserror(self):
+        self.write({
+            "AI/plans/A.md": plan(body="- [x] a\n- [ ] b\n"),
+            "AI/plans/B.md": plan(body="- [x] a\n- [ ] b\n"),
+            "AI/plans/C.md": plan(body="- [x] a\n- [ ] b\n"),
+            "Workshop/E.md": "---\ntype: guide\ntags: [a, b]\n---\n",
+            ".mimir.json": json.dumps(style_data()),
+        })
+        real, seen = check._write, {}
+        out, err = io.StringIO(), io.StringIO()
+
+        def write(path, data):
+            if path.name in ("B.md", "E.md"):
+                seen[path.name] = err.getvalue()
+                raise PermissionError(13, "Permission denied", str(path))
+            real(path, data)
+
+        with mock.patch.object(check, "_write", side_effect=write), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            code = check.main(["--vault", str(self.vault), "--fix",
+                               "--report-only"])
+        self.assertEqual(code, 1)
+        self.assertIn("fixed AI/plans/A.md: progress", seen["B.md"])
+        lines = err.getvalue().splitlines()
+        self.assertIn("ERROR AI/plans/B.md: progress: not written, "
+                      "Permission denied", lines)
+        self.assertIn("fixed AI/plans/C.md: progress", lines)
+        self.assertIn("ERROR Workshop/E.md: style: not written, "
+                      "Permission denied", lines)
+        self.assertIn("progress: 50", (self.vault / "AI/plans/C.md")
+                      .read_text())
+
     def test_dangling_symlink_warns(self):
         self.write({"AI/plans/P.md": plan(progress=100, body="- [x] a\n")})
         (self.vault / "AI/plans/x.md").symlink_to(self.vault / "AI/gone.md")
@@ -681,6 +797,13 @@ class CheckTest(VaultTestCase):
         code, out, err = self.run_cli_err("--fix", data=config_data())
         self.assertEqual((code, err), (0, ""))
         self.assertIn("WARN AI/plans/x.md:", out)
+
+
+def _yaml_front(text: str):
+    """text's frontmatter as PyYAML reads it."""
+    lines = text.splitlines(keepends=True)
+    end = notes.front_end(lines)
+    return yaml.safe_load("".join(lines[1:end]))
 
 
 if __name__ == "__main__":
