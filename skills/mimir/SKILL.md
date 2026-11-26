@@ -66,7 +66,7 @@ and wait for the user before you move a note that already exists.
 | --- | --- |
 | `check.py [--vault PATH] [--fix] [--report-only]` | checks the vault and prints one `LEVEL rel: message` line per finding |
 | `new.py KIND NAME --area AREA [--parent NAME] [--vault PATH]` | starts a note of a kind from its template and prints its path |
-| `split.py NOTE [--vault PATH] [--level N] [--dry-run] [--force]` | splits a note into a hub and parts |
+| `split.py NOTE [--vault PATH] [--level N] [--keep HEADING] [--dry-run] [--force]` | splits a note into a hub and parts in the note's own folder |
 | `scaffold.py [--vault PATH] [--dry-run]` | creates the missing templates of the kinds |
 
 ### check
@@ -106,7 +106,8 @@ What a finding asks for:
 
 `new.py` makes a kind's note where "Where a note goes" puts it, from the
 kind's `template` with `{{name}}` and `{{date}}` filled. `--parent NAME`
-sets `project: "[[NAME]]"`. It refuses a name that exists anywhere in the
+sets `project: "[[NAME]]"` and needs a template with frontmatter. It
+refuses a name that exists anywhere in the
 vault, a name with one of `/ \ : # ^ | [ ] * " < > ?`, an unknown kind or
 area, and a vault where `obsidian version` fails. It exits 0 and prints the
 path, 1 on a refusal, 2 on a config error.
@@ -115,11 +116,16 @@ path, 1 on a refusal, 2 on a config error.
 
 `split.py` cuts a note at one heading depth: the lowest that occurs more
 than once outside fenced code, or `--level N`. For a plan with
-`## Phase` headings, split at the phase level. The hub keeps the note's
-path, its frontmatter and the text above the first section, then a
-`## Parts` list. Each part is one section, named `<note> – <heading>`,
-with the en dash kept. Links to `[[Note#Heading]]` are rewritten to the
-part; plain links keep resolving to the hub.
+`## Phase` headings, split at the phase level. Every split note gets its
+own folder: a note not yet at `<dir>/<name>/<name>.md` is moved there with
+`obsidian move` first, so plain links keep resolving to the hub. The hub
+keeps the note's frontmatter, the text above the first section and the
+leading sections named with `--keep HEADING` (repeatable), then a
+`## Parts` list. For a plan, the default is to keep every section before
+the first `Phase` or `Task` heading, such as `## Global Constraints`. Each
+part is one section, named `<note> – <heading>` with the en dash kept, and
+sits next to the hub. Links to `[[Note#Heading]]` are rewritten to the
+part.
 
 Always run `--dry-run` first and show the user its output. `split.py`
 refuses a note under the size cap unless `--force` is given, a note the

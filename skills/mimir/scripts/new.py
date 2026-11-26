@@ -45,16 +45,22 @@ _BAD_NAME = re.compile(r'[/\\:#^|\[\]*"<>?]')
 
 
 def _with_parent(text: str, parent: str) -> str:
-    """text with ``project: "[[parent]]"`` set in its frontmatter."""
-    line = f'project: "[[{parent}]]"'
+    """text with ``project: "[[parent]]"`` set in its frontmatter.
+
+    The line ends like the frontmatter's first line, so a CRLF template stays
+    CRLF. A template without frontmatter raises NewError.
+    """
     lines = text.split("\n")
     if lines[0].rstrip("\r") != "---":
-        return text
+        raise NewError("--parent: the template has no frontmatter to hold "
+                       "project")
     for end in range(1, len(lines)):
         if lines[end].rstrip("\r") == "---":
             break
     else:
-        return text
+        raise NewError("--parent: the template's frontmatter is not closed")
+    ending = "\r" if lines[0].endswith("\r") else ""
+    line = f'project: "[[{parent}]]"{ending}'
     for index in range(1, end):
         if lines[index].startswith("project:"):
             lines[index] = line
@@ -80,7 +86,10 @@ def new_note(vault: Path, cfg: config.Config, kind: str, name: str,
             raise NameTaken(existing.relative_to(vault).as_posix())
     template = vault / spec.template if spec.template else None
     if template is not None and template.is_file():
-        text = template.read_text(encoding="utf-8")
+        try:
+            text = template.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            raise NewError(f"{spec.template}: not UTF-8") from None
     else:
         text = scaffold.template_text(spec)
     text = text.replace("{{name}}", name).replace(
@@ -92,7 +101,7 @@ def new_note(vault: Path, cfg: config.Config, kind: str, name: str,
         parts.append(name)
     rel = "/".join(parts + [f"{name}.md"])
     try:
-        obsidian_cli.run(["version"])
+        obsidian_cli.run(["version"], cwd=vault)
         return obsidian_cli.create_note(vault, rel, text)
     except obsidian_cli.CliError as err:
         raise NewError(str(err)) from None

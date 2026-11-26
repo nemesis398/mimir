@@ -19,13 +19,17 @@ follow [Semantic Versioning](https://semver.org/).
   `.base` reads, the size cap and the kinds' templates. `--fix` writes the
   counted `progress` and nothing else.
 - `scripts/split.py`, which splits a long note into a hub and parts, moving
-  its text byte for byte and rewriting the links to its sections. It
-  refuses an active plan.
+  its text byte for byte and rewriting the links to its sections. Every
+  split note lives in its own folder, `<dir>/<name>/<name>.md`, with its
+  parts next to it; a note elsewhere is moved there through the app first.
+  The hub keeps the leading sections named with `--keep`, for a plan those
+  before the first `Phase` or `Task` heading. It refuses an active plan and
+  keeps CRLF line endings in the files whose links it rewrites.
 - `scripts/new.py`, which starts a note of a configured kind from its
-  template in its folder, and `scripts/scaffold.py`, which creates the
+  template in its folder, keeping the template's line endings, and `scripts/scaffold.py`, which creates the
   missing templates.
-- `scripts/obsidian_cli.py`, which calls the Obsidian CLI and treats
-  `Error:` on stdout as a failure at exit 0.
+- `scripts/obsidian_cli.py`, which calls the Obsidian CLI in the vault's
+  directory and treats `Error:` on stdout as a failure at exit 0.
 - The `mimir` skill: where a note goes, the four commands, and the red
   lines for moving and splitting.
 - `README.md`, a complete `config.example.json`, and evals for filing a

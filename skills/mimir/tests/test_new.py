@@ -1,9 +1,12 @@
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest import mock
 
-from helpers import TESTS, VaultTestCase, config_data, make_config
+from helpers import SCRIPTS, TESTS, VaultTestCase, config_data, make_config
 
 import new
 import obsidian_cli
@@ -29,8 +32,11 @@ class NewNoteTest(VaultTestCase):
         data["allowed_keys"].append("created")
         self.cfg = make_config(data)
         self.log = self.vault.parent / f"{self.vault.name}.log"
+        self.cwd_log = self.vault.parent / f"{self.vault.name}.cwd"
         self.addCleanup(lambda: self.log.unlink(missing_ok=True))
+        self.addCleanup(lambda: self.cwd_log.unlink(missing_ok=True))
         env = {"MIMIR_OBSIDIAN": str(STUB), "MIMIR_STUB_LOG": str(self.log),
+               "MIMIR_STUB_CWD_LOG": str(self.cwd_log),
                "MIMIR_STUB_VAULT": str(self.vault),
                "MIMIR_STUB_ERROR": "", "MIMIR_STUB_EXIT": ""}
         for patcher in (mock.patch.dict(os.environ, env),
@@ -65,6 +71,29 @@ class NewNoteTest(VaultTestCase):
                             parent="Pantry")
         self.assertIn('project: "[[Pantry]]"\n',
                       path.read_text(encoding="utf-8"))
+
+    def test_cli_runs_in_the_vault(self):
+        new.new_note(self.vault, self.cfg, "project", "Pantry", "Workshop")
+        cwds = self.cwd_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(cwds), 2)
+        self.assertEqual({os.path.realpath(c) for c in cwds},
+                         {os.path.realpath(self.vault)})
+
+    def test_crlf_template_keeps_crlf(self):
+        (self.vault / "templates/Project.md").write_bytes(
+            PROJECT_TEMPLATE.replace("\n", "\r\n").encode("utf-8"))
+        path = new.new_note(self.vault, self.cfg, "project", "Pantry",
+                            "Workshop", parent="Garden")
+        data = path.read_bytes()
+        self.assertIn(b'project: "[[Garden]]"\r\n', data)
+        self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))
+
+    def test_parent_without_frontmatter_raises(self):
+        self.write({"templates/Project.md": "# {{name}}\n"})
+        with self.assertRaises(new.NewError):
+            new.new_note(self.vault, self.cfg, "project", "Pantry",
+                         "Workshop", parent="Garden")
+        self.assertEqual(self.calls(), [])
 
     def test_name_taken_anywhere(self):
         self.write({"AI/x/Pantry.md": "x\n"})
@@ -106,6 +135,21 @@ class NewNoteTest(VaultTestCase):
             with self.assertRaises(new.NewError):
                 new.new_note(self.vault, self.cfg, "project", "Pantry",
                              "Workshop")
+
+
+class ScriptTest(unittest.TestCase):
+    def test_scripts_run_from_another_directory(self):
+        for name in ("check.py", "new.py", "split.py"):
+            with self.subTest(script=name):
+                script = SCRIPTS / name
+                self.assertTrue(script.read_text(encoding="utf-8")
+                                .startswith("#!/usr/bin/env python3\n"))
+                self.assertTrue(os.access(script, os.X_OK))
+                with tempfile.TemporaryDirectory() as cwd:
+                    done = subprocess.run(
+                        [sys.executable, "-I", "-B", str(script), "--help"],
+                        cwd=cwd, capture_output=True, text=True)
+                self.assertEqual(done.returncode, 0, done.stderr)
 
 
 if __name__ == "__main__":

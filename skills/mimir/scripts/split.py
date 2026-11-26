@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Split a long note into a hub and parts, moving its text, never rewriting it.
 
-The hub keeps the note's path, its frontmatter and the text above the first
-section, followed by a ``## Parts`` list that links each part. Each part is
-one section, from its heading to the next heading of the same level, and is
-named ``<note> – <heading>``. Headings inside fenced code are text, not
-sections. Links into the note's sections (``[[Note#Heading|shown]]``) are
-rewritten to the part; plain links keep resolving to the hub.
+Every split note lives in its own folder: a note that is not at
+``<dir>/<name>/<name>.md`` yet is moved there through the app first, which
+keeps plain links resolving. The hub keeps the note's frontmatter, the text
+above the first section and the leading sections named in ``keep``, followed
+by a ``## Parts`` list that links each part. Each part is one section, from
+its heading to the next heading of the same level, and is named
+``<note> – <heading>``, next to the hub. For a plan the default ``keep`` is
+every section before the first ``Phase `` or ``Task `` heading. Headings
+inside fenced code are text, not sections. Links into the note's sections
+(``[[Note#Heading|shown]]``) are rewritten to the part.
 
-Usage: split.py NOTE [--vault PATH] [--level N] [--dry-run] [--force]
+Usage: split.py NOTE [--vault PATH] [--level N] [--keep HEADING]...
+                [--dry-run] [--force]
 """
 
 import argparse
@@ -108,7 +113,28 @@ def part_name(name: str, heading: str) -> str:
     return f"{name} {DASH} {flat}"
 
 
-def _plan(name: str, text: str, level: int):
+PLAN_STARTS = ("Phase ", "Task ")
+
+
+def plan_keep(text: str, level: int = 0) -> tuple[str, ...]:
+    """The headings at level before the first one that starts a phase or task.
+
+    These are a plan's leading sections (constraints, review focus), which
+    stay in the hub. A plan with no phase or task heading keeps none.
+    """
+    if level == 0:
+        level = top_level(text)
+    keep = []
+    for head in _headings(text):
+        if head.depth != level:
+            continue
+        if head.text.startswith(PLAN_STARTS):
+            return tuple(keep)
+        keep.append(head.text)
+    return ()
+
+
+def _plan(name: str, text: str, level: int, keep=()):
     """(hub, parts, sections) where sections maps a heading to its link target."""
     if level == 0:
         level = top_level(text)
@@ -118,6 +144,21 @@ def _plan(name: str, text: str, level: int):
     cuts = [h for h in heads if h.depth == level]
     if not cuts:
         raise SplitError(f"no heading of level {level} outside fenced code")
+    keep = set(keep)
+    missing = sorted(keep - {cut.text for cut in cuts})
+    if missing:
+        raise SplitError(f"keep {missing[0]!r}: no heading of level {level} "
+                         "has this text")
+    kept = 0
+    while kept < len(cuts) and cuts[kept].text in keep:
+        kept += 1
+    if kept == len(cuts):
+        raise SplitError("every section is kept; nothing is left to split")
+    late = [cut.text for cut in cuts[kept:] if cut.text in keep]
+    if late:
+        raise SplitError(f"keep {late[0]!r}: only the sections before the "
+                         "first part can stay in the hub")
+    cuts = cuts[kept:]
     parts, used, owner = [], set(), []
     for index, cut in enumerate(cuts):
         end = cuts[index + 1].offset if index + 1 < len(cuts) else len(text)
@@ -138,15 +179,22 @@ def _plan(name: str, text: str, level: int):
         for start, end, base in owner:
             if start < head.offset < end and head.depth > level:
                 sections.setdefault(head.text, f"{base}#{head.text}")
+    in_hub = {head.text for head in heads if head.offset < cuts[0].offset}
+    sections = {title: target for title, target in sections.items()
+                if title not in in_hub}
     hub = text[:cuts[0].offset] + PARTS_HEADING + "\n" + "".join(
         f"- [[{base}]]\n" for base, _ in parts)
     return hub, parts, sections
 
 
-def split_text(name: str, text: str,
-               level: int = 0) -> tuple[str, list[tuple[str, str]]]:
-    """The hub text and the (part basename, part text) pairs of a note."""
-    hub, parts, _ = _plan(name, text, level)
+def split_text(name: str, text: str, level: int = 0,
+               keep=()) -> tuple[str, list[tuple[str, str]]]:
+    """The hub text and the (part basename, part text) pairs of a note.
+
+    The sections whose heading text is in keep stay in the hub; they must
+    come before every section that becomes a part.
+    """
+    hub, parts, _ = _plan(name, text, level, keep)
     return hub, parts
 
 
@@ -216,7 +264,7 @@ def heading_link_rewrites(vault: Path, name: str,
     found = []
     for path in _markdown_files(Path(vault)):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         for old, new in _text_rewrites(text, path.name[:-3], name, sections):
@@ -230,7 +278,7 @@ def apply_rewrites(rewrites: list[tuple[Path, str, str]]) -> None:
     for path, old, new in rewrites:
         by_file.setdefault(path, []).append((old, new))
     for path, pairs in by_file.items():
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         out = []
         for line, fenced in _lines_with_fence(text.splitlines(keepends=True)):
             if not fenced:
@@ -282,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--level", type=int, default=0,
                         help="the heading depth to split at (default: the "
                              "lowest depth that occurs more than once)")
+    parser.add_argument("--keep", action="append", metavar="HEADING",
+                        help="a leading section that stays in the hub; "
+                             "repeatable (default for a plan: every section "
+                             "before the first Phase or Task heading)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would change and write nothing")
     parser.add_argument("--force", action="store_true",
@@ -305,7 +357,8 @@ def main(argv: list[str] | None = None) -> int:
         status = front.get("status") if front else None
         plan_type = cfg.kinds["plan"].note_type if "plan" in cfg.kinds \
             else "plan"
-        if status == "active" and front.get("type") == plan_type:
+        is_plan = bool(front) and front.get("type") == plan_type
+        if status == "active" and is_plan:
             raise SplitError(f"{rel}: status is active; a plan that is "
                              "being worked is not split")
         if len(data) <= cfg.size_cap_bytes and not args.force:
@@ -313,24 +366,41 @@ def main(argv: list[str] | None = None) -> int:
                 f"{rel}: {len(data)} bytes, not over the cap of "
                 f"{cfg.size_cap_bytes}; use --force to split it anyway")
         name = path.name[:-3]
-        hub, parts, sections = _plan(name, text, args.level)
+        if args.keep is not None:
+            keep = tuple(args.keep)
+        elif is_plan:
+            keep = plan_keep(text, args.level)
+        else:
+            keep = ()
+        hub, parts, sections = _plan(name, text, args.level, keep)
         taken = {p.name[:-3].casefold() for p in _markdown_files(vault)}
         clash = [base for base, _ in parts if base.casefold() in taken]
         if clash:
             raise SplitError("a note with this name exists already: "
                              + ", ".join(clash))
+        if path.parent != vault and path.parent.name == name:
+            home = path.parent.relative_to(vault).as_posix()
+        else:
+            folder = path.parent.relative_to(vault).as_posix()
+            home = name if folder == "." else f"{folder}/{name}"
+            if (vault / home / f"{name}.md").exists():
+                raise SplitError(f"{home}/{name}.md exists already")
     except (config.ConfigError, SplitError) as err:
         print(f"split: {err}", file=sys.stderr)
         return 1
 
-    folder = path.parent.relative_to(vault).as_posix()
-    prefix = "" if folder == "." else f"{folder}/"
+    prefix = f"{home}/"
+    new_rel = f"{prefix}{name}.md"
+    moving = new_rel != rel
 
     if args.dry_run:
+        if moving:
+            print(f"would move {rel} to {new_rel}")
         for base, part in parts:
             print(f"would create {prefix}{base}.md "
                   f"({len(part.encode('utf-8'))} bytes)")
-        print(f"would write the hub {rel} ({len(hub.encode('utf-8'))} bytes)")
+        print(f"would write the hub {new_rel} "
+              f"({len(hub.encode('utf-8'))} bytes)")
         planned = []
         for file, old, new in heading_link_rewrites(vault, name, sections):
             if file != path:
@@ -344,25 +414,40 @@ def main(argv: list[str] | None = None) -> int:
 
     created = []
     try:
-        obsidian_cli.run(["version"])
+        obsidian_cli.run(["version"], cwd=vault)
     except obsidian_cli.CliError as err:
         print(f"split: the Obsidian app does not answer: {err}",
               file=sys.stderr)
         return 1
+    if moving:
+        target = vault / new_rel
+        try:
+            os.makedirs(target.parent, exist_ok=True)
+            obsidian_cli.run(["move", f"path={rel}", f"to={new_rel}"],
+                             cwd=vault)
+            if not target.is_file() or path.exists():
+                raise obsidian_cli.CliError(
+                    f"obsidian move did not leave {rel} at {new_rel}")
+        except (OSError, obsidian_cli.CliError) as err:
+            print(f"split: {err}", file=sys.stderr)
+            print(f"split: stopped; {rel} is not split", file=sys.stderr)
+            return 1
+        print(f"moved {rel} to {new_rel}")
+        path = target
     for base, part in parts:
         part_rel = f"{prefix}{base}.md"
         try:
             obsidian_cli.create_note(vault, part_rel, part)
         except obsidian_cli.CliError as err:
             print(f"split: {err}", file=sys.stderr)
-            print(f"split: stopped; {rel} is untouched; created before the "
-                  f"failure: {', '.join(created) or 'nothing'}",
-                  file=sys.stderr)
+            print(f"split: stopped; {new_rel} holds the note's text "
+                  f"untouched; created before the failure: "
+                  f"{', '.join(created) or 'nothing'}", file=sys.stderr)
             return 1
         created.append(part_rel)
         print(f"created {part_rel}")
     path.write_bytes(hub.encode("utf-8"))
-    print(f"wrote the hub {rel}")
+    print(f"wrote the hub {new_rel}")
     rewrites = heading_link_rewrites(vault, name, sections)
     apply_rewrites(rewrites)
     for file, old, new in rewrites:

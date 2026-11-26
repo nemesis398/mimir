@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -108,6 +109,34 @@ Reload the module.
 See [[Home]]."""
 
 
+KEEP_PLAN = """---
+type: plan
+status: done
+---
+# Pond plan
+
+## Global Constraints
+
+- Alice keeps the frogs.
+
+## Review Focus
+
+- The liner.
+
+## Phase 1: Dig
+
+### Task 1: Hole
+
+- [x] Dig it.
+
+## Phase 2: Fill
+
+### Task 2: Water
+
+- [ ] Fill it.
+"""
+
+
 def snapshot(root: Path) -> dict:
     return {p.relative_to(root).as_posix(): p.read_bytes()
             for p in sorted(root.rglob("*")) if p.is_file()}
@@ -162,6 +191,31 @@ class SplitTextTest(unittest.TestCase):
         self.assertIn("[[Pantry-Umbau – Overview – Größe]]", hub)
         self.assertEqual(split.join_parts(hub, parts), text)
 
+    def test_keep_leaves_leading_sections_in_hub(self):
+        keep = ("Global Constraints", "Review Focus")
+        hub, parts = split.split_text("Pond plan", KEEP_PLAN, keep=keep)
+        self.assertEqual([b for b, _ in parts],
+                         ["Pond plan – Phase 1 Dig", "Pond plan – Phase 2 Fill"])
+        self.assertIn("## Global Constraints\n\n- Alice keeps the frogs.\n",
+                      hub)
+        self.assertIn("## Review Focus\n\n- The liner.\n", hub)
+        self.assertLess(hub.index("## Review Focus"), hub.index("## Parts"))
+        self.assertEqual(split.join_parts(hub, parts), KEEP_PLAN)
+
+    def test_plan_keep_is_everything_before_the_first_phase(self):
+        self.assertEqual(split.plan_keep(KEEP_PLAN),
+                         ("Global Constraints", "Review Focus"))
+        self.assertEqual(split.plan_keep(PHASE_PLAN), ())
+        self.assertEqual(split.plan_keep(TASK_PLAN), ("Global Constraints",))
+
+    def test_keep_must_lead_and_exist(self):
+        for keep in (("Phase 2: Fill",), ("Nowhere",),
+                     ("Global Constraints", "Review Focus", "Phase 1: Dig",
+                      "Phase 2: Fill")):
+            with self.subTest(keep=keep):
+                with self.assertRaises(split.SplitError):
+                    split.split_text("Pond plan", KEEP_PLAN, keep=keep)
+
     def test_duplicate_headings_get_distinct_parts(self):
         text = "## Notes\n\na\n\n## Notes\n\nb\n"
         hub, parts = split.split_text("X", text)
@@ -199,6 +253,20 @@ class HeadingLinkTest(VaultTestCase):
             "[[Computer/Garden Shed – Troubleshooting#Wifi drops]]")])
 
 
+class RewriteTest(VaultTestCase):
+    def test_rewrite_keeps_crlf(self):
+        self.write({"Other.md": ""})
+        other = self.vault / "Other.md"
+        other.write_bytes(b"a\r\n[[Garden Shed#Decisions]]\r\nb\r\n")
+        rewrites = split.heading_link_rewrites(
+            self.vault, "Garden Shed",
+            {"Decisions": "Garden Shed – Decisions"})
+        split.apply_rewrites(rewrites)
+        self.assertEqual(other.read_bytes(),
+                         "a\r\n[[Garden Shed – Decisions]]\r\nb\r\n"
+                         .encode("utf-8"))
+
+
 class CliTest(unittest.TestCase):
     def test_error_line_at_exit_zero_raises(self):
         with mock.patch.dict(os.environ, {"MIMIR_OBSIDIAN": str(STUB),
@@ -206,6 +274,16 @@ class CliTest(unittest.TestCase):
             with self.assertRaises(obsidian_cli.CliError):
                 obsidian_cli.run(["create", "path=x.md"])
             self.assertIn("stub", obsidian_cli.run(["version"]))
+
+    def test_run_takes_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "cwd.log"
+            with mock.patch.dict(os.environ, {"MIMIR_OBSIDIAN": str(STUB),
+                                              "MIMIR_STUB_CWD_LOG": str(log),
+                                              "MIMIR_STUB_ERROR": ""}):
+                obsidian_cli.run(["version"], cwd=Path(tmp))
+            self.assertEqual(os.path.realpath(log.read_text().strip()),
+                             os.path.realpath(tmp))
 
     def test_nonzero_exit_and_missing_binary_raise(self):
         with mock.patch.dict(os.environ, {"MIMIR_OBSIDIAN": str(STUB),
@@ -225,10 +303,13 @@ class SplitCommandTest(VaultTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.log = self.vault.parent / f"{self.vault.name}.log"
+        self.cwd_log = self.vault.parent / f"{self.vault.name}.cwd"
         self.addCleanup(lambda: self.log.unlink(missing_ok=True))
+        self.addCleanup(lambda: self.cwd_log.unlink(missing_ok=True))
         self.write({".mimir.json": json.dumps(CONFIG)})
         self.env = {"MIMIR_OBSIDIAN": str(STUB),
                     "MIMIR_STUB_LOG": str(self.log),
+                    "MIMIR_STUB_CWD_LOG": str(self.cwd_log),
                     "MIMIR_STUB_VAULT": str(self.vault),
                     "MIMIR_STUB_ERROR": "", "MIMIR_STUB_EXIT": ""}
 
@@ -246,39 +327,98 @@ class SplitCommandTest(VaultTestCase):
         return [json.loads(line) for line in
                 self.log.read_text(encoding="utf-8").splitlines()]
 
+    def read_split(self, folder: str, name: str):
+        hub = (self.vault / folder / f"{name}.md").read_bytes().decode()
+        parts = []
+        for line in hub.split("## Parts\n", 1)[1].splitlines():
+            if line.startswith("- [["):
+                base = line[4:-2]
+                text = (self.vault / folder / f"{base}.md").read_bytes()
+                parts.append((base, text.decode("utf-8")))
+        return hub, parts
+
     def test_real_run_creates_parts_and_rewrites(self):
         self.write({"Computer/Garden Shed.md": ENTITY,
                     "Other.md": "[[Garden Shed#Troubleshooting|the fix]] "
                                 "[[Garden Shed#Wifi drops]]\n"})
         code, out = self.run_split("Computer/Garden Shed.md")
         self.assertEqual(code, 0, out)
-        hub = (self.vault / "Computer/Garden Shed.md").read_text("utf-8")
-        parts = []
-        for line in hub.split("## Parts\n", 1)[1].splitlines():
-            if line.startswith("- [["):
-                base = line[4:-2]
-                text = (self.vault / "Computer" / f"{base}.md").read_text(
-                    "utf-8")
-                parts.append((base, text))
+        self.assertFalse((self.vault / "Computer/Garden Shed.md").exists())
+        hub, parts = self.read_split("Computer/Garden Shed", "Garden Shed")
         self.assertEqual(split.join_parts(hub, parts), ENTITY)
         self.assertEqual(
             (self.vault / "Other.md").read_text("utf-8"),
             "[[Garden Shed – Troubleshooting|the fix]] "
             "[[Garden Shed – Troubleshooting#Wifi drops]]\n")
         self.assertIn("Other.md", out)
-        creates = [c for c in self.calls() if c[0] == "create"]
-        self.assertEqual(creates[0],
-                         ["create", "path=Computer/Garden Shed – Decisions.md"])
-        self.assertEqual(self.calls()[0], ["version"])
+        calls = self.calls()
+        self.assertEqual(calls[:2], [
+            ["version"],
+            ["move", "path=Computer/Garden Shed.md",
+             "to=Computer/Garden Shed/Garden Shed.md"]])
+        self.assertEqual(calls[2], [
+            "create", "path=Computer/Garden Shed/Garden Shed – Decisions.md"])
+        self.assertEqual(sorted(p.name for p in
+                                (self.vault / "Computer").iterdir()),
+                         ["Garden Shed"])
+
+    def test_cli_runs_in_the_vault(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        code, out = self.run_split("Work plan.md", "--force")
+        self.assertEqual(code, 0, out)
+        cwds = self.cwd_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(cwds), len(self.calls()))
+        self.assertEqual({os.path.realpath(c) for c in cwds},
+                         {os.path.realpath(self.vault)})
+
+    def test_note_in_its_own_folder_is_not_moved(self):
+        self.write({"Garden/Work plan/Work plan.md": PHASE_PLAN})
+        code, out = self.run_split("Work plan", "--force")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("move", [c[0] for c in self.calls()])
+        hub, parts = self.read_split("Garden/Work plan", "Work plan")
+        self.assertEqual(split.join_parts(hub, parts), PHASE_PLAN)
+
+    def test_move_error_stops(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        before = snapshot(self.vault)
+        code, out = self.run_split("Work plan.md", "--force",
+                                   MIMIR_STUB_ERROR="move")
+        self.assertNotEqual(code, 0)
+        self.assertEqual([c[0] for c in self.calls()], ["version", "move"])
+        self.assertEqual(snapshot(self.vault), before)
+
+    def test_plan_keeps_leading_sections(self):
+        self.write({"Pond plan.md": KEEP_PLAN})
+        code, out = self.run_split("Pond plan.md", "--force")
+        self.assertEqual(code, 0, out)
+        hub, parts = self.read_split("Pond plan", "Pond plan")
+        self.assertIn("## Global Constraints\n", hub)
+        self.assertIn("## Review Focus\n", hub)
+        self.assertEqual([b for b, _ in parts],
+                         ["Pond plan – Phase 1 Dig", "Pond plan – Phase 2 Fill"])
+        self.assertEqual(split.join_parts(hub, parts), KEEP_PLAN)
+
+    def test_keep_flag(self):
+        self.write({"Garden Shed.md": ENTITY})
+        code, out = self.run_split("Garden Shed.md", "--force",
+                                   "--keep", "Decisions")
+        self.assertEqual(code, 0, out)
+        hub, parts = self.read_split("Garden Shed", "Garden Shed")
+        self.assertIn("## Decisions\n", hub)
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(split.join_parts(hub, parts), ENTITY)
 
     def test_cli_error_at_exit_zero_stops(self):
         self.write({"Work plan.md": PHASE_PLAN})
         before = snapshot(self.vault)
+        before["Work plan/Work plan.md"] = before.pop("Work plan.md")
         code, out = self.run_split("Work plan.md", "--force",
                                    MIMIR_STUB_ERROR="create")
         self.assertNotEqual(code, 0)
         self.assertIn("Error:", out)
-        self.assertEqual([c[0] for c in self.calls()], ["version", "create"])
+        self.assertEqual([c[0] for c in self.calls()],
+                         ["version", "move", "create"])
         self.assertEqual(snapshot(self.vault), before)
 
     def test_app_not_running_refuses(self):
@@ -297,6 +437,9 @@ class SplitCommandTest(VaultTestCase):
         code, out = self.run_split("Garden plan", "--dry-run")
         self.assertEqual(code, 0, out)
         self.assertIn("Garden plan – Task 2 Water Paths", out)
+        self.assertIn("would move Garden plan.md to Garden plan/Garden plan.md",
+                      out)
+        self.assertIn("would create Garden plan/Garden plan – Task 1", out)
         self.assertIn("Other.md", out)
         self.assertEqual(snapshot(self.vault), before)
         self.assertEqual(self.calls(), [])
@@ -309,7 +452,7 @@ class SplitCommandTest(VaultTestCase):
         self.assertEqual(self.calls(), [])
         code, out = self.run_split("Small.md", "--force")
         self.assertEqual(code, 0, out)
-        self.assertTrue((self.vault / "Small – B.md").exists())
+        self.assertTrue((self.vault / "Small/Small – B.md").exists())
 
     def test_skipped_notes_refused(self):
         self.write({"AI/specs/Spec.md": TASK_PLAN,
@@ -341,13 +484,14 @@ class SplitCommandTest(VaultTestCase):
         before = (self.vault / "Work plan.md").read_bytes()
 
         def templater(_seconds):
-            for path in self.vault.glob("Work plan – *.md"):
+            for path in self.vault.glob("Work plan/Work plan – *.md"):
                 path.write_text("template text\n", encoding="utf-8")
 
         with mock.patch.object(obsidian_cli.time, "sleep", templater):
             code, out = self.run_split("Work plan.md")
         self.assertNotEqual(code, 0)
-        self.assertEqual((self.vault / "Work plan.md").read_bytes(), before)
+        self.assertEqual(
+            (self.vault / "Work plan/Work plan.md").read_bytes(), before)
 
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,

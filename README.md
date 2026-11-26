@@ -24,8 +24,9 @@ agent and the checker never disagree.
   without their hub, the root, properties that a `.base` reads, the size
   cap and the kinds' templates. `--fix` writes the counted `progress`.
 - **`new.py`** starts a note of a kind from its template, in its folder.
-- **`split.py`** splits a note into a hub and parts, moving its text
-  byte for byte, and rewrites the links to its sections.
+- **`split.py`** splits a note into a hub and parts in the note's own
+  folder, moving its text byte for byte, and rewrites the links to its
+  sections.
 - **`scaffold.py`** creates the templates that the kinds name and the
   vault lacks.
 
@@ -92,7 +93,7 @@ then the current directory; the others use the current directory.
 | --- | --- |
 | `check.py [--fix] [--report-only]` | prints one `LEVEL rel: message` line per finding; exits 1 on an ERROR unless `--report-only`, 2 on a config error |
 | `new.py KIND NAME --area AREA [--parent NAME]` | creates the note and prints its path; `--parent` sets `project: "[[NAME]]"` |
-| `split.py NOTE [--level N] [--dry-run] [--force]` | splits at the lowest heading depth that repeats, or at `--level`; refuses a note under the cap without `--force`, a skipped note and an active plan |
+| `split.py NOTE [--level N] [--keep HEADING] [--dry-run] [--force]` | moves the note to `<dir>/<name>/<name>.md` and splits it there, at the lowest heading depth that repeats or at `--level`; the sections named with `--keep` (for a plan, those before the first `Phase` or `Task` heading) stay in the hub; refuses a note under the cap without `--force`, a skipped note and an active plan |
 | `scaffold.py [--dry-run]` | creates each missing template and never touches an existing file |
 
 The scripts sit in `skills/mimir/scripts/`. Run them as `python3 -B`.

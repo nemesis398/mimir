@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Check a vault against the rules in its ``.mimir.json``.
 
 ``check_vault`` only reads. ``fix_progress`` is the one writer: it sets the
@@ -17,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import config
-import notes
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config  # noqa: E402
+import notes  # noqa: E402
 
 PROJECT_TYPE = "project"
 CLOSED_STATES = ("done", "cancelled")

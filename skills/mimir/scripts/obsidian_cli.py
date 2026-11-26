@@ -23,11 +23,15 @@ def binary() -> str:
     return os.environ.get("MIMIR_OBSIDIAN") or "obsidian"
 
 
-def run(args: list[str]) -> str:
-    """Run the CLI with args and stdin closed; its stdout on success."""
+def run(args: list[str], cwd: Path | None = None) -> str:
+    """Run the CLI with args and stdin closed; its stdout on success.
+
+    cwd is the directory the CLI runs in; the app acts on the vault that
+    holds it, so callers pass the vault.
+    """
     command = [binary(), *args]
     try:
-        done = subprocess.run(command, stdin=subprocess.DEVNULL,
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, cwd=cwd,
                               capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
     except OSError as err:
@@ -53,7 +57,7 @@ def create_note(vault: Path, rel: str, text: str) -> Path:
     vault = Path(vault)
     path = vault / rel
     os.makedirs(path.parent, exist_ok=True)
-    run(["create", f"path={rel}"])
+    run(["create", f"path={rel}"], cwd=vault)
     data = text.encode("utf-8")
     path.write_bytes(data)
     time.sleep(REREAD_DELAY)
