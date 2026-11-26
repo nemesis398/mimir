@@ -1,10 +1,11 @@
 """Read and validate a vault's ``.mimir.json``.
 
 The top-level keys are the ``Config`` field names, and every one of them is
-required except the format keys in ``OPTIONAL_KEYS``, whose absence turns
-their rule off. ``kinds`` maps a kind name to an object with the ``Kind``
-fields other than ``name``; only ``hub`` and ``has_status`` have no default
-there.
+required except the format and style keys in ``OPTIONAL_KEYS``, whose
+absence turns their rule off (``style_skip_names`` defaults to the
+Excalidraw drawings). ``kinds`` maps a kind name to an object with the
+``Kind`` fields other than ``name``; only ``hub`` and ``has_status`` have no
+default there.
 Any problem raises ``ConfigError`` with a message that names the key.
 """
 
@@ -16,7 +17,10 @@ from typing import Literal
 
 CONFIG_NAME = ".mimir.json"
 PROGRESS_MODES = ("checkboxes",)
-OPTIONAL_KEYS = ("date_keys", "tag_pattern", "warn_words")
+LIST_STYLES = ("block", "flow")
+DEFAULT_STYLE_SKIP_NAMES = ("*.excalidraw.md",)
+OPTIONAL_KEYS = ("date_keys", "tag_pattern", "warn_words", "key_order",
+                 "list_style", "style_skip_names")
 
 
 class ConfigError(Exception):
@@ -34,6 +38,7 @@ class Kind:
     template: str | None
     folder: str | None
     name_pattern: str | None = None
+    front_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,9 @@ class Config:
     date_keys: tuple[str, ...] = ()
     tag_pattern: str | None = None
     warn_words: tuple[str, ...] = ()
+    key_order: tuple[str, ...] = ()
+    list_style: Literal["block", "flow"] | None = None
+    style_skip_names: tuple[str, ...] = DEFAULT_STYLE_SKIP_NAMES
 
 
 def load(vault: Path) -> Config:
@@ -106,7 +114,26 @@ def from_dict(data) -> Config:
         date_keys=_string_list(data.get("date_keys", []), "date_keys"),
         tag_pattern=_pattern(data.get("tag_pattern"), "tag_pattern"),
         warn_words=_string_list(data.get("warn_words", []), "warn_words"),
+        key_order=_key_order(data.get("key_order", [])),
+        list_style=_list_style(data.get("list_style")),
+        style_skip_names=_string_list(
+            data.get("style_skip_names", list(DEFAULT_STYLE_SKIP_NAMES)),
+            "style_skip_names"),
     )
+
+
+def _key_order(value) -> tuple[str, ...]:
+    order = _string_list(value, "key_order")
+    for key in order:
+        if order.count(key) > 1:
+            raise ConfigError(f"key_order: lists {key} twice")
+    return order
+
+
+def _list_style(value) -> str | None:
+    if value is not None and value not in LIST_STYLES:
+        raise ConfigError('list_style: must be "block", "flow" or null')
+    return value
 
 
 def _string_list(value, key: str) -> tuple[str, ...]:
@@ -155,8 +182,10 @@ def _kind(name: str, spec) -> Kind:
     for key in spec:
         if key not in allowed:
             raise ConfigError(f"{prefix}.{key}: unknown key")
-    for key in ("has_status", "hub"):
+    for key in ("has_status", "hub", "front_required"):
         if key not in spec:
+            if key == "front_required":
+                continue
             raise ConfigError(f"{prefix}.{key}: missing key")
         if not isinstance(spec[key], bool):
             raise ConfigError(f"{prefix}.{key}: must be true or false")
@@ -178,4 +207,5 @@ def _kind(name: str, spec) -> Kind:
         folder=spec.get("folder"),
         name_pattern=_pattern(spec.get("name_pattern"),
                               f"{prefix}.name_pattern"),
+        front_required=spec.get("front_required", False),
     )

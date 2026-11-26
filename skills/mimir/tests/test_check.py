@@ -18,6 +18,60 @@ def plan(status="active", progress=None, body="", extra=""):
     return "\n".join(lines) + "\n---\n# Plan\n\n" + body
 
 
+KEY_ORDER = ["type", "status", "project", "domain", "progress", "updated",
+             "created", "description", "tags", "aliases"]
+
+
+def style_data(**extra) -> dict:
+    """config_data() with the style keys and a spec kind that needs a front."""
+    data = config_data()
+    data["key_order"] = list(KEY_ORDER)
+    data["list_style"] = "block"
+    data["allowed_keys"] = data["allowed_keys"] + ["related"]
+    data["kinds"]["spec"] = {
+        "has_status": True, "required": ["description"], "hub": False,
+        "progress": None, "template": None, "folder": "specs",
+        "front_required": True}
+    data.update(extra)
+    return data
+
+
+FLOW_FRONT = (
+    "---\n"
+    "tags: [garden, \"bee, keeping\", 'it''s']\n"
+    "type: guide\n"
+    "related: [\"[[Alice]]\", '[[Bob]]']\n"
+    "description: >-\n"
+    "  Alice keeps bees\n"
+    "\n"
+    "  in the garden.\n"
+    "machine: laptop  # a comment\n"
+    "status: active\n"
+    "aliases: [Al, ]\n"
+    "---\n")
+BLOCK_FRONT = (
+    "---\n"
+    "type: guide\n"
+    "status: active\n"
+    "description: >-\n"
+    "  Alice keeps bees\n"
+    "\n"
+    "  in the garden.\n"
+    "tags:\n"
+    "  - garden\n"
+    "  - \"bee, keeping\"\n"
+    "  - 'it''s'\n"
+    "aliases:\n"
+    "  - Al\n"
+    "related:\n"
+    "  - \"[[Alice]]\"\n"
+    "  - \"[[Bob]]\"\n"
+    "machine: laptop  # a comment\n"
+    "---\n")
+BODY = ("# Garden\r\ntags: [x]\n\nstatus: done\r\n---\n"
+        "type: guide\n  no newline at the end")
+
+
 class CheckTest(VaultTestCase):
     def run_check(self, data=None):
         return check.check_vault(self.vault, make_config(data))
@@ -160,10 +214,11 @@ class CheckTest(VaultTestCase):
                          "progress")
 
     def test_done_with_open_part(self):
-        self.split_plan(hub_status="done", part_status="active")
+        self.split_plan(hub_status="done", part_status="active", progress=100)
         self.assert_only(self.run_check(), "ERROR", "AI/plans/Big.md",
                          "Big – Eins", "active")
-        self.split_plan(hub_status="done", part_status="cancelled")
+        self.split_plan(hub_status="done", part_status="cancelled",
+                        progress=100)
         self.assertEqual(self.run_check(), [])
 
     # project links
@@ -368,6 +423,154 @@ class CheckTest(VaultTestCase):
                          .encode("utf-8"))
         self.assertEqual(check.fix_progress(self.vault, make_config()), [])
         self.assertEqual(self.run_cli(), (0, ""))
+
+
+    # frontmatter style
+
+    def run_cli_err(self, *args, data=None):
+        self.write({".mimir.json": json.dumps(
+            style_data() if data is None else data)})
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = check.main(["--vault", str(self.vault), *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_list_style_flow_where_block(self):
+        self.write({"Workshop/G.md": "---\ntype: guide\ntags: [a, b]\n"
+                                    "aliases: [Al]\n---\n"})
+        self.assert_only(self.run_check(style_data()), "ERROR",
+                         "Workshop/G.md", "list style", "tags", "aliases")
+        self.write({"Workshop/G.md": "---\ntype: guide\ntags:\n  - a\n"
+                                    "  - b\naliases: []\n---\n"})
+        self.assertEqual(self.run_check(style_data()), [])
+
+    def test_list_style_block_where_flow(self):
+        data = style_data(list_style="flow")
+        self.write({"Workshop/G.md": "---\ntype: guide\ntags:\n  - a\n---\n"})
+        self.assert_only(self.run_check(data), "ERROR", "Workshop/G.md",
+                         "list style", "tags")
+        self.write({"Workshop/G.md": "---\ntype: guide\ntags: [a]\n---\n"})
+        self.assertEqual(self.run_check(data), [])
+
+    def test_key_order(self):
+        self.write({"Workshop/G.md": "---\nstatus: active\ntype: guide\n"
+                                    "---\n"})
+        self.assert_only(self.run_check(style_data()), "ERROR",
+                         "Workshop/G.md", "key order", "type")
+        self.write({"Workshop/G.md": "---\nmachine: laptop\ntype: guide\n"
+                                    "---\n"})
+        self.assert_only(self.run_check(style_data()), "ERROR",
+                         "Workshop/G.md", "key order", "type")
+        self.write({"Workshop/G.md": "---\ntype: guide\nstatus: active\n"
+                                    "description: A guide\nrelated: x\n"
+                                    "machine: laptop\n---\n"})
+        self.assertEqual(self.run_check(style_data()), [])
+
+    def test_no_frontmatter(self):
+        self.write({"AI/specs/S.md": "# S\n\nA spec without a front.\n",
+                    "AI/plans/P-summary.md": "# P\n"})
+        self.assert_only(self.run_check(style_data()), "ERROR",
+                         "AI/specs/S.md", "no frontmatter", "spec")
+        self.write({"AI/specs/S.md": "---\ntype: spec\nstatus: active\n"
+                                     "description: A spec\n---\n# S\n"})
+        self.assertEqual(self.run_check(style_data()), [])
+
+    def test_style_rules_off_without_keys(self):
+        self.write({"Workshop/G.md": "---\nstatus: active\ntype: guide\n"
+                                    "tags: [a]\n---\n",
+                    "AI/specs/S.md": "# S\n"})
+        data = style_data()
+        del data["key_order"], data["list_style"]
+        data["kinds"]["spec"]["front_required"] = False
+        self.assertEqual(self.run_check(data), [])
+        self.assertEqual(check.fix_style(self.vault, make_config(data)),
+                         ([], []))
+
+    def test_style_skip_names(self):
+        drawing = "---\nexcalidraw-plugin: parsed\ntags: [excalidraw]\n---\n"
+        self.write({"Workshop/D.excalidraw.md": drawing})
+        self.assertEqual(self.run_check(style_data()), [])
+        self.assertEqual(check.fix_style(self.vault, make_config(style_data())),
+                         ([], []))
+        self.assertEqual((self.vault / "Workshop/D.excalidraw.md").read_text(),
+                         drawing)
+
+    def test_fix_style_round_trip(self):
+        crlf = (FLOW_FRONT.replace("\n", "\r\n") + BODY).encode("utf-8")
+        self.write({"Workshop/G.md": FLOW_FRONT + BODY, "Workshop/C.md": crlf})
+        findings = self.run_check(style_data())
+        messages = [f.message for f in findings if f.rel == "Workshop/G.md"]
+        self.assertEqual(len(messages), 2, findings)
+        self.assertTrue(any(m.startswith("list style") for m in messages))
+        self.assertTrue(any(m.startswith("key order") for m in messages))
+        code, out, err = self.run_cli_err("--fix")
+        self.assertEqual((code, out), (0, ""))
+        self.assertIn("fixed Workshop/G.md: style", err)
+        self.assertIn("fixed Workshop/C.md: style", err)
+        self.assertEqual((self.vault / "Workshop/G.md").read_bytes(),
+                         (BLOCK_FRONT + BODY).encode("utf-8"))
+        self.assertEqual((self.vault / "Workshop/C.md").read_bytes(),
+                         (BLOCK_FRONT.replace("\n", "\r\n") + BODY)
+                         .encode("utf-8"))
+        cfg = make_config(style_data())
+        self.assertEqual(check.fix_style(self.vault, cfg), ([], []))
+        self.assertEqual(check.check_vault(self.vault, cfg), [])
+
+    def test_fix_progress_then_style(self):
+        text = "---\nstatus: active\ntype: plan\ndescription: A plan\n---\n" \
+               "- [x] a\n- [ ] b\n"
+        self.write({"AI/plans/P.md": text})
+        code, out, err = self.run_cli_err("--fix")
+        self.assertEqual((code, out), (0, ""))
+        self.assertIn("fixed AI/plans/P.md: progress", err)
+        self.assertIn("fixed AI/plans/P.md: style", err)
+        self.assertEqual((self.vault / "AI/plans/P.md").read_text(),
+                         "---\ntype: plan\nstatus: active\nprogress: 50\n"
+                         "description: A plan\n---\n- [x] a\n- [ ] b\n")
+
+    def test_unreadable_front_not_rewritten(self):
+        files = {
+            "Workshop/N.md": "---\nstatus: active\ntype: guide\n"
+                            "tags: [a, [b, c]]\n---\nbody\n",
+            "Workshop/M.md": "---\nstatus: active\ntype: guide\n"
+                            "tags: [a,\n  b]\n---\nbody\n",
+            "Workshop/A.md": "---\nstatus: active\ntype: guide\n"
+                            "aliases: &names\n  - Al\n---\nbody\n",
+            "Workshop/B.md": "---\nstatus: active\n# a comment\n"
+                            "type: guide\n---\nbody\n",
+        }
+        self.write(files)
+        code, out, err = self.run_cli_err("--fix")
+        self.assertEqual(code, 1)
+        for rel, text in files.items():
+            self.assertEqual((self.vault / rel).read_text(), text)
+            self.assertIn(f"{rel}: style: not rewritten", err)
+            self.assertIn(f"ERROR {rel}: key order", out)
+        self.assertNotIn("fixed", err)
+        self.assertIn("nested flow list", err)
+        self.assertIn("multi-line flow list", err)
+        self.assertIn("anchor", err)
+
+    def test_done_plan_expects_100(self):
+        self.write({"AI/plans/P.md": plan(status="done", progress=100,
+                                          body="- [x] a\n- [ ] b\n")})
+        self.assertEqual(self.run_check(), [])
+        self.write({"AI/plans/P.md": plan(status="done", progress=50,
+                                          body="- [x] a\n- [ ] b\n")})
+        self.assert_only(self.run_check(), "ERROR", "AI/plans/P.md",
+                         "progress 50", "100")
+        self.assertEqual(check.fix_progress(self.vault, make_config()),
+                         [self.vault / "AI/plans/P.md"])
+        self.assertIn("progress: 100\n",
+                      (self.vault / "AI/plans/P.md").read_text())
+
+    def test_cancelled_plan_progress_not_checked(self):
+        self.write({"AI/plans/P.md": plan(status="cancelled", progress=10,
+                                          body="- [x] a\n- [ ] b\n"),
+                    "AI/plans/Q.md": plan(status="cancelled",
+                                          body="- [x] a\n")})
+        self.assertEqual(self.run_check(), [])
+        self.assertEqual(check.fix_progress(self.vault, make_config()), [])
 
     def test_cli_exit_codes(self):
         self.write({"Loose.md": "text\n"})

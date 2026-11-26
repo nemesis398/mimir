@@ -35,7 +35,8 @@
       "progress": null,
       "template": "templates/Meeting.md",
       "folder": "meetings",
-      "name_pattern": "\\d{4}-\\d{2}-\\d{2} .+"
+      "name_pattern": "\\d{4}-\\d{2}-\\d{2} .+",
+      "front_required": true
     }
   },
   "view_properties": ["type", "status", "updated", "description", "progress", "project"],
@@ -46,5 +47,8 @@
   "size_skip_names": ["Seed catalog*"],
   "date_keys": ["updated", "created"],
   "tag_pattern": "[a-z0-9]+(-[a-z0-9]+)*",
-  "warn_words": ["und", "oder", "für", "mit", "der", "die", "das"]
+  "warn_words": ["und", "oder", "für", "mit", "der", "die", "das"],
+  "key_order": ["type", "status", "project", "progress", "updated", "created", "description", "tags", "aliases"],
+  "list_style": "block",
+  "style_skip_names": ["*.excalidraw.md"]
 }

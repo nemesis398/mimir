@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Check a vault against the rules in its ``.mimir.json``.
 
-``check_vault`` only reads. ``fix_progress`` is the one writer: it sets the
-counted ``progress`` line of the notes whose kind counts checkboxes. The CLI
-prints one ``LEVEL rel: message`` line per finding and exits 1 on any ERROR
-(0 with ``--report-only``), 2 on a config error.
+``check_vault`` only reads. ``fix_progress`` and ``fix_style`` are the
+writers: the first sets the counted ``progress`` line of the notes whose kind
+counts checkboxes, the second rewrites a frontmatter into the config's
+``key_order`` and ``list_style`` and leaves one it cannot read safely as it
+is. The CLI prints one ``LEVEL rel: message`` line per finding and exits 1
+on any ERROR (0 with ``--report-only``), 2 on a config error.
 """
 
 import argparse
@@ -44,6 +46,7 @@ _BASE_KEY = re.compile(
 _DISPLAY = re.compile(r"^displayName[ \t]*:(?:[ \t]+(.*?))?[ \t]*$")
 _DISPLAY_FLOW = re.compile(
     r"\bdisplayName[ \t]*:[ \t]*(\"[^\"]*\"|'[^']*'|[^,}]+)")
+_EMPTY_FLOW = re.compile(r"^\[[ \t]*\](?:[ \t]+#.*)?$")
 
 
 @dataclass(frozen=True)
@@ -98,13 +101,109 @@ def fix_progress(vault: Path, cfg: config.Config) -> list[Path]:
     return changed
 
 
+def fix_style(vault: Path, cfg: config.Config) \
+        -> tuple[list[Path], list[tuple[Path, str]]]:
+    """Rewrite each frontmatter into the style; (changed, [(path, why not)]).
+
+    A note in ``style_skip_names`` or without a closed frontmatter is left
+    out; one that ``restyle`` cannot rewrite is listed with its reason and
+    left untouched.
+    """
+    if not cfg.key_order and cfg.list_style is None:
+        return [], []
+    changed, skipped = [], []
+    for note in notes.load_notes(Path(vault)):
+        if note.front is None or _style_skipped(cfg, note.rel):
+            continue
+        data = note.path.read_bytes()
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            new, reason = restyle(data.decode("utf-8", errors="replace"), cfg)
+            if new is not None or reason:
+                skipped.append((note.path, "not UTF-8"))
+            continue
+        new, reason = restyle(text, cfg)
+        if reason:
+            skipped.append((note.path, reason))
+        elif new is not None and new != text:
+            _write(note.path, new.encode("utf-8"))
+            changed.append(note.path)
+    return changed, skipped
+
+
+def restyle(text: str, cfg: config.Config) -> tuple[str | None, str | None]:
+    """(text with its frontmatter in the style, why it cannot be rewritten).
+
+    Flow lists become block lists when ``list_style`` is block, and the keys
+    take the ``key_order``; every other line, the line endings and the body
+    stay as they are. Gives (None, None) when the frontmatter is already in
+    the style, (None, reason) when it is not and cannot be read safely.
+    """
+    layout = notes.front_entries(text)
+    if layout is None:
+        return None, None
+    lines, end, entries = layout
+    keyed = [entry for entry in entries if entry.key is not None]
+    blocks, reason, needed = [], None, False
+    for entry in keyed:
+        block = lines[entry.start:entry.stop]
+        form = _list_form(lines, entry)
+        if cfg.list_style == "block" and form == "flow":
+            needed = True
+            try:
+                block = _block_list(lines, entry)
+            except ValueError as err:
+                reason = reason or str(err)
+        elif cfg.list_style == "flow" and form == "block":
+            needed = True
+            reason = reason or "a block list, --fix writes no flow lists"
+        blocks.append(block)
+    keys = [entry.key for entry in keyed]
+    order = _key_ranks(keys, cfg.key_order)
+    reordered = order != list(range(len(keyed)))
+    if not (needed or reordered):
+        return None, None
+    if reason:
+        return None, reason
+    if len(keyed) != len(entries):
+        return None, "a top-level line that is no key"
+    if len(set(keys)) != len(keys):
+        return None, "a key that appears twice"
+    if notes.front_errors(text):
+        return None, "a frontmatter a YAML parser would reject"
+    if _has_anchor(lines, keyed):
+        return None, "an anchor, alias or tag"
+    if reordered:
+        covered = {i for entry in keyed
+                   for i in range(entry.start, entry.stop)}
+        if any(i not in covered
+               for i in range(keyed[0].start, keyed[-1].stop)):
+            return None, "a comment or blank line between keys"
+    starts = {entry.start: entry for entry in keyed}
+    out, slot, i = [lines[0]], 0, 1
+    while i < end:
+        if i in starts:
+            out += blocks[order[slot]]
+            i, slot = starts[i].stop, slot + 1
+        else:
+            out.append(lines[i])
+            i += 1
+    new = "".join(out + lines[end:])
+    if notes.parse_front(new) != notes.parse_front(text) \
+            or notes.front_errors(new):
+        return None, "the rewrite would change a value"
+    return new, None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="check.py", description="Check a vault against its .mimir.json.")
     parser.add_argument("--vault", type=Path, default=None,
                         help="the vault root (default: $MIMIR_VAULT, then .)")
     parser.add_argument("--fix", action="store_true",
-                        help="write the counted progress first")
+                        help="write the counted progress and the "
+                             "frontmatter style first")
     parser.add_argument("--report-only", action="store_true",
                         help="exit 0 even when there are errors")
     args = parser.parse_args(argv)
@@ -118,6 +217,14 @@ def main(argv: list[str] | None = None) -> int:
         for path in fix_progress(vault, cfg):
             rel = path.relative_to(vault).as_posix()
             print(f"fixed {rel}: progress", file=sys.stderr)
+        changed, skipped = fix_style(vault, cfg)
+        for path in changed:
+            rel = path.relative_to(vault).as_posix()
+            print(f"fixed {rel}: style", file=sys.stderr)
+        for path, reason in skipped:
+            rel = path.relative_to(vault).as_posix()
+            print(f"WARN {rel}: style: not rewritten, {reason}",
+                  file=sys.stderr)
     findings = check_vault(vault, cfg)
     for finding in findings:
         print(f"{finding.level} {finding.rel}: {finding.message}")
@@ -192,7 +299,11 @@ class _Context:
         return kinds
 
     def progress_targets(self):
-        """(note, counted) for each note whose kind counts checkboxes."""
+        """(note, expected) for each note whose kind counts checkboxes.
+
+        A done note expects 100 whatever its boxes say; a cancelled note's
+        progress is not checked.
+        """
         for note in self.notes:
             if note.front is None or note.rel in self.hub_of \
                     or self.is_template(note):
@@ -200,8 +311,14 @@ class _Context:
             if not any(k.progress == "checkboxes"
                        for k in self.kinds_of(note)):
                 continue
+            status = str(note.front.get("status"))
+            if status == "cancelled":
+                continue
             texts = [note.body] + [p.body for p in self.parts.get(note.rel, [])]
             counted = count_progress(texts)
+            if status == "done" and (counted is not None
+                                     or "progress" in note.front):
+                counted = 100
             if counted is not None:
                 yield note, counted
 
@@ -218,10 +335,11 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
             "WARN", rel, f"{note.size} bytes, over the cap of "
                          f"{cfg.size_cap_bytes}"))
     if front is None:
-        return found
+        return found + _check_front_required(ctx, note)
     text = note.path.read_bytes().decode("utf-8", errors="replace")
     for problem in notes.front_errors(text):
         error(problem)
+    found += _check_style(ctx, note, text)
     note_type = _type(note)
     status = front.get("status")
     if status is not None:
@@ -260,6 +378,119 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
     if not _empty(front.get("project")):
         found += _check_project(ctx, rel, front["project"])
     return found
+
+
+def _check_front_required(ctx: _Context, note: notes.Note) -> list[Finding]:
+    """An ERROR for a note without frontmatter in a front_required folder."""
+    if ctx.is_template(note):
+        return []
+    dirs = note.rel.split("/")[:-1]
+    for kind in ctx.cfg.kinds.values():
+        if kind.front_required and kind.folder and kind.folder in dirs:
+            return [Finding("ERROR", note.rel,
+                            f"no frontmatter, kind {kind.name} requires it")]
+    return []
+
+
+def _check_style(ctx: _Context, note: notes.Note, text: str) -> list[Finding]:
+    """The ``list style`` and ``key order`` findings of one note."""
+    cfg = ctx.cfg
+    if (not cfg.key_order and cfg.list_style is None) \
+            or _style_skipped(cfg, note.rel):
+        return []
+    layout = notes.front_entries(text)
+    if layout is None:
+        return []
+    lines, _, entries = layout
+    keyed = [entry for entry in entries if entry.key is not None]
+    found = []
+    if cfg.list_style:
+        other = "flow" if cfg.list_style == "block" else "block"
+        wrong = [entry.key for entry in keyed
+                 if _list_form(lines, entry) == other]
+        if wrong:
+            what = f"is a {other} list" if len(wrong) == 1 \
+                else f"are {other} lists"
+            found.append(Finding(
+                "ERROR", note.rel,
+                f"list style: {', '.join(wrong)} {what}, list_style is "
+                f"{cfg.list_style}"))
+    if cfg.key_order:
+        keys = [entry.key for entry in keyed]
+        expected = [keys[i] for i in _key_ranks(keys, cfg.key_order)]
+        for have, want in zip(keys, expected):
+            if have != want:
+                found.append(Finding(
+                    "ERROR", note.rel,
+                    f"key order: {want} belongs before {have}"))
+                break
+    return found
+
+
+def _key_ranks(keys: list[str], order: tuple[str, ...]) -> list[int]:
+    """The indices of keys in the style's order: order's keys, then the rest."""
+    rank = {key: i for i, key in enumerate(order)}
+    return sorted(range(len(keys)),
+                  key=lambda i: (rank.get(keys[i], len(order)), i))
+
+
+def _list_form(lines: list[str], entry: notes.Entry) -> str | None:
+    """"flow" or "block" when entry's value is a non-empty list, else None."""
+    raw = entry.raw
+    if raw.startswith("[") and not raw.startswith("[[") \
+            and not _EMPTY_FLOW.match(raw):
+        return "flow"
+    if raw and not raw.startswith("#"):
+        return None
+    content = [line.strip() for line in lines[entry.start + 1:entry.stop]]
+    content = [c for c in content if c and not c.startswith("#")]
+    if content and all(c == "-" or c.startswith("- ") for c in content):
+        return "block"
+    return None
+
+
+def _block_list(lines: list[str], entry: notes.Entry) -> list[str]:
+    """The lines of entry's one-line flow list as a block list."""
+    items = notes.flow_items(entry.raw)
+    if entry.stop > entry.start + 1:
+        raise ValueError("a multi-line flow list")
+    if not items:
+        raise ValueError("an empty flow list")
+    line = lines[entry.start]
+    ending = line[len(line.rstrip("\r\n")):] or "\n"
+    head = line[:line.index(":") + 1]
+    return [head + ending] + [f"  - {_block_item(item)}{ending}"
+                              for item in items]
+
+
+def _block_item(item: str) -> str:
+    """A flow item as a block item: a single-quoted wikilink gets "..."."""
+    if item.startswith("'"):
+        value = notes.scalar(item)
+        if isinstance(value, str) and value.startswith("[[") \
+                and '"' not in value and "\\" not in value:
+            return f'"{value}"'
+    return item
+
+
+def _has_anchor(lines: list[str], entries: list[notes.Entry]) -> bool:
+    """Whether a value or a block list item starts with &, * or !."""
+    for entry in entries:
+        if entry.raw[:1] in ("&", "*", "!"):
+            return True
+        for line in lines[entry.start + 1:entry.stop]:
+            item = line.strip()
+            if item.startswith("- ") and item[2:].lstrip()[:1] in "&*!" \
+                    and item[2:].strip():
+                return True
+    return False
+
+
+def _style_skipped(cfg: config.Config, rel: str) -> bool:
+    filename = rel.rsplit("/", 1)[-1]
+    return any(fnmatch.fnmatchcase(filename, pattern)
+               or fnmatch.fnmatchcase(_basename(rel), pattern)
+               for pattern in cfg.style_skip_names)
 
 
 def _check_dates(ctx: _Context, note: notes.Note, text: str) -> list[Finding]:
@@ -442,12 +673,14 @@ def _check_progress(ctx: _Context) -> list[Finding]:
     found = []
     for note, counted in ctx.progress_targets():
         have = note.front.get("progress")
+        want = "a done note has 100" if str(note.front.get("status")) \
+            == "done" else f"counted {counted}"
         if have is None:
             found.append(Finding(
-                "ERROR", note.rel, f"progress missing, counted {counted}"))
+                "ERROR", note.rel, f"progress missing, {want}"))
         elif have != counted or isinstance(have, bool):
             found.append(Finding(
-                "ERROR", note.rel, f"progress {have}, counted {counted}"))
+                "ERROR", note.rel, f"progress {have}, {want}"))
     return found
 
 
@@ -616,7 +849,12 @@ def _set_progress(path: Path, value: int) -> bool:
                       if line.startswith("status:")), len(head) - 1)
         ending = _ending(head[after] if head else "", lines[0])
         head.insert(after + 1, f"progress: {value}{ending}")
-    data = "".join(lines[:1] + head + lines[end:]).encode("utf-8")
+    _write(path, "".join(lines[:1] + head + lines[end:]).encode("utf-8"))
+    return True
+
+
+def _write(path: Path, data: bytes) -> None:
+    """Replace path's content with data in one step, keeping its mode."""
     handle, tmp = tempfile.mkstemp(dir=path.parent, prefix=".mimir-",
                                    suffix=".tmp")
     try:
@@ -628,7 +866,6 @@ def _set_progress(path: Path, value: int) -> bool:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
-    return True
 
 
 def _ending(line: str, fallback: str) -> str:

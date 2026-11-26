@@ -63,6 +63,37 @@ class ConfigTest(VaultTestCase):
         data["states_by_type"] = {"computer": "stale"}
         self.assert_error_names(data, "states_by_type.computer")
 
+    def test_style_keys(self):
+        data = self.example()
+        for key in ("key_order", "list_style", "style_skip_names"):
+            data.pop(key, None)
+        data["kinds"]["plan"].pop("front_required", None)
+        cfg = config.from_dict(data)
+        self.assertEqual((cfg.key_order, cfg.list_style, cfg.style_skip_names),
+                         ((), None, ("*.excalidraw.md",)))
+        self.assertFalse(cfg.kinds["plan"].front_required)
+        data.update(key_order=["type", "status"], list_style="block",
+                    style_skip_names=["*.canvas.md"])
+        data["kinds"]["plan"]["front_required"] = True
+        cfg = config.from_dict(data)
+        self.assertEqual((cfg.key_order, cfg.list_style, cfg.style_skip_names),
+                         (("type", "status"), "block", ("*.canvas.md",)))
+        self.assertTrue(cfg.kinds["plan"].front_required)
+
+    def test_style_keys_wrong_name_the_key(self):
+        data = self.example()
+        data["list_style"] = "inline"
+        self.assert_error_names(data, "list_style")
+        data = self.example()
+        data["key_order"] = ["type", "type"]
+        self.assert_error_names(data, "key_order")
+        data = self.example()
+        data["style_skip_names"] = "*.excalidraw.md"
+        self.assert_error_names(data, "style_skip_names")
+        data = self.example()
+        data["kinds"]["plan"]["front_required"] = "yes"
+        self.assert_error_names(data, "kinds.plan.front_required")
+
     def test_kind_fields(self):
         data = self.example()
         data["kinds"]["season"] = {"note_type": "project", "hub": True,

@@ -35,6 +35,20 @@ class Note:
     size: int
 
 
+@dataclass(frozen=True)
+class Entry:
+    """One top-level frontmatter line and the lines of its value.
+
+    ``start`` and ``stop`` index the note's lines (``stop`` just past the
+    last line of the value); ``key`` is None for a top-level line that is
+    no ``key:`` line, and ``raw`` is the stripped text after the colon.
+    """
+    key: str | None
+    raw: str
+    start: int
+    stop: int
+
+
 def parse_front(text: str) -> tuple[dict | None, str]:
     """Split text into (frontmatter dict, body); (None, text) without one."""
     lines = text.splitlines(keepends=True)
@@ -86,6 +100,111 @@ def front_raw(text: str) -> dict[str, str]:
         return {}
     return {_unquote(match.group(1).strip()): (match.group(2) or "").strip()
             for _, _, match, _ in _top_lines(lines[1:end]) if match}
+
+
+def front_entries(text: str) -> tuple[list[str], int, list[Entry]] | None:
+    """(lines with their endings, index of the closing ``---``, entries).
+
+    The lines split as ``parse_front`` splits them, so joining
+    ``lines[end:]`` gives the closing line and the body byte for byte.
+    Top-level blank and comment lines belong to no entry. None without a
+    closed frontmatter.
+    """
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    for end in range(1, len(lines)):
+        if lines[end].rstrip("\r\n").rstrip() == "---":
+            break
+    else:
+        return None
+    inner = [line.rstrip("\r\n") for line in lines[1:end]]
+    entries = []
+    for index, _, match, children in _top_lines(inner):
+        stop = (children[-1][0] if children else index) + 2
+        key = _unquote(match.group(1).strip()) if match else None
+        raw = (match.group(2) or "").strip() if match else ""
+        entries.append(Entry(key, raw, index + 1, stop))
+    return lines, end, entries
+
+
+def flow_items(raw: str) -> list[str]:
+    """The source text of each item of the one-line flow list raw.
+
+    Quoted items keep their quotes. Raises ValueError naming what cannot be
+    carried into a block list safely: a nested list or map, a list that
+    goes on below its line, an anchor, alias or tag, a comment or text
+    after the closing bracket, an item YAML would read otherwise.
+    """
+    if not raw.startswith("["):
+        raise ValueError("no flow list")
+    items, i, size = [], 1, len(raw)
+
+    def skip(at):
+        while at < size and raw[at] in " \t":
+            at += 1
+        return at
+
+    while True:
+        i = skip(i)
+        if i >= size:
+            raise ValueError("a multi-line flow list")
+        char = raw[i]
+        if char == "]":
+            break
+        if char in "[{":
+            raise ValueError("a nested flow list")
+        if char in "&*!":
+            raise ValueError("an anchor, alias or tag in a flow list")
+        if char in "\"'":
+            close = _quote_close(raw, i)
+            if close is None:
+                raise ValueError("a multi-line flow list")
+            item, i = raw[i:close], skip(close)
+            if i >= size:
+                raise ValueError("a multi-line flow list")
+            if raw[i] not in ",]":
+                raise ValueError("text after a quoted item")
+        else:
+            stop = i
+            while stop < size and raw[stop] not in ",[]{}":
+                stop += 1
+            item, i = raw[i:stop].rstrip(), stop
+            if i >= size:
+                raise ValueError("a multi-line flow list")
+            if raw[i] in "[{":
+                raise ValueError("a nested flow list")
+            if raw[i] == "}":
+                raise ValueError("a flow map in a flow list")
+            problem = _flow_item_problem(item)
+            if problem:
+                raise ValueError(problem)
+        items.append(item)
+        if raw[i] == ",":
+            i += 1
+            continue
+        break
+    rest = raw[i + 1:].strip()
+    if rest.startswith("#"):
+        raise ValueError("a comment after a flow list")
+    if rest:
+        raise ValueError("text after a flow list")
+    return items
+
+
+def _flow_item_problem(item: str) -> str | None:
+    """Why the plain flow list item cannot become a block item, or None."""
+    if not item:
+        return "an empty item in a flow list"
+    if item.startswith("#") or _COMMENT.search(item):
+        return "a comment inside a flow list"
+    if _COLON.search(item) or item.endswith(":"):
+        return "a flow map in a flow list"
+    if item[0] in _RESERVED or item[0] in "|>":
+        return f'an item that starts with "{item[0]}"'
+    if item[0] in "-?" and (len(item) == 1 or item[1] in " \t"):
+        return f'an item that starts with "{item[0]} "'
+    return None
 
 
 def scalar(text: str):
