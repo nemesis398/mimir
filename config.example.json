@@ -1,0 +1,31 @@
+{
+  "areas": ["Garden", "Work"],
+  "system_folders": ["templates", "attachments"],
+  "root_allowlist": ["Home.md"],
+  "states": ["planned", "active", "paused", "done", "cancelled"],
+  "states_by_type": {},
+  "kinds": {
+    "project": {
+      "has_status": true,
+      "required": ["description"],
+      "hub": true,
+      "progress": null,
+      "template": "templates/Project.md",
+      "folder": null
+    },
+    "plan": {
+      "has_status": true,
+      "required": ["description"],
+      "hub": false,
+      "progress": "checkboxes",
+      "template": "templates/Plan.md",
+      "folder": "plans"
+    }
+  },
+  "view_properties": ["type", "status", "description", "progress", "project"],
+  "allowed_keys": ["tags", "aliases", "created"],
+  "size_cap_bytes": 40960,
+  "size_skip_folders": ["attachments"],
+  "size_skip_types": [],
+  "size_skip_names": []
+}

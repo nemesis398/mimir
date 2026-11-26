@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "mimir",
+  "version": "0.1.0",
+  "description": "Keep an Obsidian vault in shape from one config: check its structure and properties, count plan progress, split long notes into hub and parts, and start new notes in the right place.",
+  "author": {
+    "name": "nemesis398",
+    "url": "https://github.com/nemesis398"
+  },
+  "homepage": "https://github.com/nemesis398/mimir",
+  "repository": "https://github.com/nemesis398/mimir",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "vault",
+    "notes",
+    "structure",
+    "lint"
+  ]
+}
