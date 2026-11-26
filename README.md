@@ -56,8 +56,9 @@ names another binary.
 
 The rules live in `.mimir.json` at the vault root. `config.example.json`
 shows one for a made-up vault with two areas. Every top-level key is
-required except the three format keys at the end of the table, whose rule is
-off while the key is absent; an unknown key is an error that names it.
+required except the format and style keys at the end of the table, whose
+rule is off while the key is absent; an unknown key is an error that names
+it.
 
 | Key | Type | What it is |
 | --- | --- | --- |
@@ -76,6 +77,9 @@ off while the key is absent; an unknown key is an error that names it.
 | `date_keys` | list of keys, optional | the frontmatter keys whose value must be an unquoted `YYYY-MM-DD` date |
 | `tag_pattern` | regular expression, optional | the form every entry of `tags` must match in full, such as `[a-z0-9]+(-[a-z0-9]+)*` |
 | `warn_words` | list of words, optional | the words that get a WARN in a `description`, matched as whole words in any case |
+| `key_order` | list of keys, optional | the order of the keys in every frontmatter; keys it does not name follow in their own order |
+| `list_style` | `"block"` or `"flow"`, optional | the one form of a list value: `block` is one `- item` per line, as Obsidian writes it, `flow` is `[a, b]` |
+| `style_skip_names` | list of patterns, default `["*.excalidraw.md"]` | the note names `key_order` and `list_style` skip, such as files another plugin writes |
 
 A kind's entry:
 
@@ -89,6 +93,7 @@ A kind's entry:
 | `template` | path or `null` | the template `new.py` fills and `scaffold.py` creates |
 | `folder` | folder name or `null` | the folder inside an area that holds its notes |
 | `name_pattern` | regular expression or `null` | the form its notes' names must match in full, without `.md`, such as `\d{4}-\d{2}-\d{2} .+` |
+| `front_required` | boolean, default `false` | a note in its `folder` without frontmatter is an ERROR |
 
 ## Commands
 

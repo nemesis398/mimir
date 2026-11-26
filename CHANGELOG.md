@@ -18,6 +18,12 @@ follow [Semantic Versioning](https://semver.org/).
   `project` links, folders without their hub, the root, the properties a
   `.base` reads, the size cap and the kinds' templates. `--fix` writes the
   counted `progress` and nothing else.
+- One frontmatter style: the config keys `key_order`, `list_style` and
+  `style_skip_names` and the kind key `front_required`; `check.py` reports
+  `list style`, `key order` and `no frontmatter`, and `--fix` rewrites flow
+  lists into block lists and reorders the keys, leaving the values and the
+  body as they are. A `done` note's `progress` is 100, a `cancelled` note's
+  is not checked.
 - `notes.front_errors`, and with it a `check` ERROR naming the line, for
   frontmatter a YAML parser would reject: `: ` or a final `:` inside an
   unquoted value, an unclosed quote or flow list, text after the closing

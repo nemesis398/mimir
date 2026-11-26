@@ -58,7 +58,9 @@ Decide in this order, reading each value from `.mimir.json`:
    `required`, and every `required` key has a value. When the config sets
    them, each key in `date_keys` holds an unquoted `YYYY-MM-DD` date, each
    tag matches `tag_pattern`, and the note's name matches its kind's
-   `name_pattern`.
+   `name_pattern`. The keys follow `key_order`, every list takes the form
+   `list_style` names, and a note in the folder of a kind with
+   `front_required` has frontmatter at all.
 
 A note whose `type` no kind names is filed by area alone. Propose the path
 and wait for the user before you move a note that already exists.
@@ -77,9 +79,20 @@ and wait for the user before you move a note that already exists.
 `check.py` only reads. It exits 1 on any ERROR, 0 with `--report-only`, and
 2 when `.mimir.json` is wrong. `--fix` first writes the counted `progress`
 into each note whose kind has `"progress": "checkboxes"`, changing only that
-line, then checks. Progress is the share of `[x]` and `[-]` boxes among all
-boxes outside fenced code, as a whole number; a hub counts its parts too,
-and a part carries no `progress` of its own.
+line, then rewrites each frontmatter into the style, then checks. Progress
+is the share of `[x]` and `[-]` boxes among all boxes outside fenced code,
+as a whole number; a hub counts its parts too, and a part carries no
+`progress` of its own. A `done` note has 100 whatever its boxes say, and a
+`cancelled` note's `progress` is not checked.
+
+The style rewrite turns flow lists into block lists when `list_style` is
+`block` (a quoted item keeps its quotes, a wikilink item gets double
+quotes) and puts the keys in `key_order`. No value, comment or line ending
+changes, and the body stays byte for byte. A frontmatter it cannot read
+safely, such as a nested or multi-line flow list, an anchor, or a comment
+between keys it would move, stays as it is and gets
+`style: not rewritten` with the reason. `--fix` prints each path it
+changed.
 
 What a finding asks for:
 
@@ -90,6 +103,11 @@ What a finding asks for:
 - `... missing, kind ... requires it`: fill the key from the note's text;
   do not invent a value.
 - `progress ..., counted ...` or `progress missing`: run `check.py --fix`.
+- `list style: ...` or `key order: ...`: run `check.py --fix`. When it
+  says `style: not rewritten`, rewrite that frontmatter by hand into the
+  form the reason names; change no value.
+- `no frontmatter, kind ... requires it`: give the note the kind's `type`
+  and its `required` keys, from the note's own text.
 - `done, but part ... is ...`: the hub is closed while a part is open.
   Ask the user which of the two is wrong.
 - `project [[...]] does not resolve` or `is not a type project note`:
