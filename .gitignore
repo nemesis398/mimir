@@ -1,2 +1,3 @@
 evals/results/
 __pycache__/
+skills/mimir/tests/private-words.txt
