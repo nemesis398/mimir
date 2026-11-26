@@ -27,8 +27,8 @@ the shape.
    or in a commit message. A personal value belongs in the vault's
    `.mimir.json`, and the tests and examples use made-up ones (`Alice`,
    `/home/alice/Notes`). `test_privacy.py` checks the tree.
-2. **`check` only reads.** Only `check --fix` writes, and only the counted
-   `progress` line.
+2. **`check` only reads.** Only `check --fix` writes: the counted
+   `progress` line, then the frontmatter style (flow lists, key order).
 3. **Notes move through the Obsidian CLI.** A command that moves, renames
    or creates a note calls `obsidian` with `path=`, reads stdin from
    `/dev/null`, and treats `Error:` on stdout as a failure even at exit 0.

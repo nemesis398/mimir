@@ -17,7 +17,7 @@ follow [Semantic Versioning](https://semver.org/).
   unknown and required keys, `progress` against the counted checkboxes,
   `project` links, folders without their hub, the root, the properties a
   `.base` reads, the size cap and the kinds' templates. `--fix` writes the
-  counted `progress` and nothing else.
+  counted `progress`, then rewrites the frontmatter style (see below).
 - One frontmatter style: the config keys `key_order`, `list_style` and
   `style_skip_names` and the kind key `front_required`; `check.py` reports
   `list style`, `key order` and `no frontmatter`, and `--fix` rewrites flow

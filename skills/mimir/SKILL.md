@@ -50,7 +50,8 @@ Decide in this order, reading each value from `.mimir.json`:
    Every folder with notes in it below an area needs its hub, the note of
    the folder's own name, unless a kind's `folder` names it.
 4. **Its project.** A note that belongs to a project carries
-   `project: "[[Hub]]"`, a quoted wikilink to a `type: project` note, and
+   `project`, a one-item list holding a quoted wikilink `"[[Hub]]"` to a
+   `type: project` note, and
    stays where its kind puts it.
 5. **Its frontmatter.** Its `status` is one of `states`, or one of the extra
    states `states_by_type` lists for its `type`. A note with a `type` uses
@@ -170,9 +171,9 @@ Always run `--dry-run` first and show the user its output. `split.py`
 refuses a note under the size cap unless `--force` is given, a note the
 config skips (`size_skip_folders`, `size_skip_types`, `size_skip_names`), a
 plan with `status: active`, a part name that exists anywhere, and a vault
-where the Obsidian app does not answer. After a split, give the parts their
-frontmatter (a plan's parts get `type: plan-part` and the hub's `status`,
-no `progress`) and run `check.py --fix`.
+where the Obsidian app does not answer. A split of a plan writes each
+part's frontmatter itself (`type: plan-part` and the hub's `status`, no
+`progress`); do not add it. Then run `check.py --fix` for the hub's `progress`.
 
 ### scaffold
 
@@ -193,5 +194,5 @@ that exists. Run `--dry-run` first.
 - **Text moves, it is never rewritten.** A split or a move keeps every
   sentence. Joining the parts gives the original note back; do not reword,
   shorten or merge text on the way.
-- **`check` reads, `--fix` writes only `progress`.** Every other finding is
-  fixed by hand, one batch at a time, after the user agrees.
+- **`check` reads, `--fix` writes only `progress` and the frontmatter
+  style.** Every other finding is fixed by hand, one batch at a time, after the user agrees.

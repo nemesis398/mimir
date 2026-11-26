@@ -23,7 +23,8 @@ agent and the checker never disagree.
   `progress` against the counted checkboxes, `project` links, folders
   without their hub, the root, properties that a `.base` reads, the size
   cap and the kinds' templates. One `displayName` per property across the
-  bases is required, except for `file.name`. `--fix` writes the counted `progress`.
+  bases is required, except for `file.name`. `--fix` writes the counted `progress` and rewrites each
+  frontmatter into the configured style.
 - **`new.py`** starts a note of a kind from its template, in its folder.
 - **`split.py`** splits a note into a hub and parts in the note's own
   folder, moving its text byte for byte, and rewrites the links to its
@@ -33,7 +34,7 @@ agent and the checker never disagree.
 
 ## Install
 
-In Claude Code, add the galdr marketplace and install the plugin from it:
+In Claude Code, add the galdr marketplace and install the plugin from it. These lines work from the first release:
 
 ```text
 /plugin marketplace add nemesis398/galdr
@@ -102,8 +103,8 @@ then the current directory; the others use the current directory.
 
 | Command | Does |
 | --- | --- |
-| `check.py [--fix] [--report-only]` | prints one `LEVEL rel: message` line per finding; exits 1 on an ERROR unless `--report-only`, 2 on a config error |
-| `new.py KIND NAME --area AREA [--parent NAME]` | creates the note and prints its path; `--parent` sets `project: "[[NAME]]"` |
+| `check.py [--fix] [--report-only]` | `--fix` writes `progress` and the frontmatter style; prints one `LEVEL rel: message` line per finding; exits 1 on an ERROR unless `--report-only`, 2 on a config error |
+| `new.py KIND NAME --area AREA [--parent NAME]` | creates the note and prints its path; `--parent` sets `project` to a one-item list holding `"[[NAME]]"` |
 | `split.py NOTE [--level N] [--keep HEADING] [--dry-run] [--force]` | moves the note to `<dir>/<name>/<name>.md` and splits it there, at the lowest heading depth that repeats or at `--level`; the sections named with `--keep` (for a plan, those before the first `Phase` or `Task` heading) stay in the hub; refuses a note under the cap without `--force`, a skipped note and an active plan |
 | `scaffold.py [--dry-run]` | creates each missing template and never touches an existing file |
 
