@@ -530,11 +530,16 @@ def _has_anchor(lines: list[str], entries: list[notes.Entry]) -> bool:
     return False
 
 
-def _style_skipped(cfg: config.Config, rel: str) -> bool:
+def _name_matches(rel: str, patterns) -> bool:
+    """Whether a pattern matches the file name of rel, with or without .md."""
     filename = rel.rsplit("/", 1)[-1]
     return any(fnmatch.fnmatchcase(filename, pattern)
                or fnmatch.fnmatchcase(_basename(rel), pattern)
-               for pattern in cfg.style_skip_names)
+               for pattern in patterns)
+
+
+def _style_skipped(cfg: config.Config, rel: str) -> bool:
+    return _name_matches(rel, cfg.style_skip_names)
 
 
 def _check_dates(ctx: _Context, note: notes.Note, text: str) -> list[Finding]:
@@ -584,11 +589,8 @@ def _check_warn_words(ctx: _Context, note: notes.Note) -> list[Finding]:
         return []
     text = " ".join(map(str, value)) if isinstance(value, list) \
         else str(value)
-    hits = []
-    for match in ctx.warn_re.finditer(text):
-        word = match.group(0).lower()
-        if word not in hits:
-            hits.append(word)
+    hits = list(dict.fromkeys(match.group(0).lower()
+                              for match in ctx.warn_re.finditer(text)))
     if not hits:
         return []
     return [Finding("WARN", note.rel,
@@ -777,10 +779,8 @@ def _check_bases(vault: Path, known: frozenset) -> list[Finding]:
     for path in _walk(vault, ".base"):
         rel = path.relative_to(vault).as_posix()
         text = path.read_bytes().decode("utf-8", errors="replace")
-        unknown = []
-        for name in _base_properties(text):
-            if name not in known and name not in unknown:
-                unknown.append(name)
+        unknown = [name for name in dict.fromkeys(_base_properties(text))
+                   if name not in known]
         found += [Finding("ERROR", rel, f"unknown property {name}")
                   for name in unknown]
     return found
@@ -879,8 +879,7 @@ def _set_progress(path: Path, value: int) -> bool:
     except UnicodeDecodeError:
         return False
     lines = text.splitlines(keepends=True)
-    end = next((i for i in range(1, len(lines))
-                if lines[i].rstrip("\r\n").rstrip() == "---"), None)
+    end = notes.front_end(lines)
     if not lines or lines[0].rstrip("\r\n") != "---" or end is None:
         return False
     head = lines[1:end]
@@ -940,10 +939,7 @@ def _size_skipped(cfg: config.Config, note: notes.Note) -> bool:
             return True
     if _type(note) in cfg.size_skip_types:
         return True
-    filename = note.rel.rsplit("/", 1)[-1]
-    return any(fnmatch.fnmatchcase(filename, pattern)
-               or fnmatch.fnmatchcase(_basename(note.rel), pattern)
-               for pattern in cfg.size_skip_names)
+    return _name_matches(note.rel, cfg.size_skip_names)
 
 
 def _type(note: notes.Note) -> str | None:

@@ -54,11 +54,19 @@ def parse_front(text: str) -> tuple[dict | None, str]:
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
         return None, text
+    end = front_end(lines)
+    if end is None:
+        return None, text
+    inner = [line.rstrip("\r\n") for line in lines[1:end]]
+    return _parse_map(inner), "".join(lines[end + 1:])
+
+
+def front_end(lines: list[str]) -> int | None:
+    """The index of the closing ``---`` line after the opening one, or None."""
     for end in range(1, len(lines)):
-        if lines[end].rstrip("\r\n").rstrip() == "---":
-            inner = [line.rstrip("\r\n") for line in lines[1:end]]
-            return _parse_map(inner), "".join(lines[end + 1:])
-    return None, text
+        if lines[end].rstrip() == "---":
+            return end
+    return None
 
 
 def front_errors(text: str) -> list[str]:
@@ -71,10 +79,8 @@ def front_errors(text: str) -> list[str]:
     lines = text.splitlines()
     if not lines or lines[0] != "---":
         return []
-    for end in range(1, len(lines)):
-        if lines[end].rstrip() == "---":
-            break
-    else:
+    end = front_end(lines)
+    if end is None:
         return []
     problems = []
     for index, line, match, children in _top_lines(lines[1:end]):
@@ -93,10 +99,8 @@ def front_raw(text: str) -> dict[str, str]:
     lines = text.splitlines()
     if not lines or lines[0].rstrip() != "---":
         return {}
-    for end in range(1, len(lines)):
-        if lines[end].rstrip() == "---":
-            break
-    else:
+    end = front_end(lines)
+    if end is None:
         return {}
     return {_unquote(match.group(1).strip()): (match.group(2) or "").strip()
             for _, _, match, _ in _top_lines(lines[1:end]) if match}
@@ -113,10 +117,8 @@ def front_entries(text: str) -> tuple[list[str], int, list[Entry]] | None:
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
         return None
-    for end in range(1, len(lines)):
-        if lines[end].rstrip("\r\n").rstrip() == "---":
-            break
-    else:
+    end = front_end(lines)
+    if end is None:
         return None
     inner = [line.rstrip("\r\n") for line in lines[1:end]]
     entries = []

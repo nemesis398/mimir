@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config  # noqa: E402
 import obsidian_cli  # noqa: E402
-from notes import parse_front  # noqa: E402
+from notes import front_end, parse_front  # noqa: E402
 
 PARTS_HEADING = "## Parts\n"
 DASH = "–"
@@ -75,10 +75,8 @@ def _body_start(lines: list[str]) -> int:
     """The index of the first line after the frontmatter, as parse_front reads it."""
     if not lines or lines[0].rstrip("\r\n") != "---":
         return 0
-    for end in range(1, len(lines)):
-        if lines[end].rstrip("\r\n").rstrip() == "---":
-            return end + 1
-    return 0
+    end = front_end(lines)
+    return 0 if end is None else end + 1
 
 
 def _headings(text: str) -> list[Heading]:
@@ -238,9 +236,10 @@ def _text_rewrites(text: str, stem: str, name: str,
             continue
         for match in _LINK.finditer(line):
             target, anchor, alias = match.groups()
-            folder, slash, last = target.strip().rpartition("/")
+            target = target.strip()
+            folder, slash, last = target.rpartition("/")
             base = last[:-3] if last.endswith(".md") else last
-            if target.strip():
+            if target:
                 if base != name:
                     continue
             elif stem not in own:
@@ -248,7 +247,7 @@ def _text_rewrites(text: str, stem: str, name: str,
             new_target = _resolve_anchor(anchor, sections)
             if new_target is None:
                 continue
-            if not target.strip():
+            if not target:
                 if new_target.split("#", 1)[0] == stem:
                     continue
             elif slash:

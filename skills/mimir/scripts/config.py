@@ -183,11 +183,9 @@ def _kind(name: str, spec) -> Kind:
         if key not in allowed:
             raise ConfigError(f"{prefix}.{key}: unknown key")
     for key in ("has_status", "hub", "front_required"):
-        if key not in spec:
-            if key == "front_required":
-                continue
+        if key not in spec and key != "front_required":
             raise ConfigError(f"{prefix}.{key}: missing key")
-        if not isinstance(spec[key], bool):
+        if key in spec and not isinstance(spec[key], bool):
             raise ConfigError(f"{prefix}.{key}: must be true or false")
     progress = spec.get("progress")
     if progress is not None and progress not in PROGRESS_MODES:
