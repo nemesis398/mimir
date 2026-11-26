@@ -25,8 +25,8 @@ follow [Semantic Versioning](https://semver.org/).
   body as they are. A `done` note's `progress` is 100, a `cancelled` note's
   is not checked.
 - `notes.front_errors`, and with it a `check` ERROR naming the line, for
-  frontmatter a YAML parser would reject: `: ` or a final `:` inside an
-  unquoted value, an unclosed quote or flow list, text after the closing
+  frontmatter a YAML parser would reject: a colon followed by a space, or a
+  final colon, inside an unquoted value, an unclosed quote or flow list, text after the closing
   quote or bracket, a tab in the indentation, a reserved first character
   and a stray list item. Obsidian marks such properties as invalid.
 - Format rules in `check`, each off until its key is set: `date_keys`
