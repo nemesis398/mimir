@@ -647,5 +647,31 @@ class CheckTest(VaultTestCase):
         self.assertEqual(self.run_cli(data=data), (2, ""))
 
 
+    # check safety
+
+    def test_progress_counts_nested_parts(self):
+        self.write({
+            "AI/plans/Big.md": plan(
+                progress=75,
+                body="- [x] a\n\n## Parts\n\n- [[Big – Eins]]\n"),
+            "AI/plans/Big – Eins.md":
+                "- [ ] b\n\n## Parts\n\n- [[Big – Eins – Tief]]\n",
+            "AI/plans/Big – Eins – Tief.md": "- [x] c\n- [x] d\n",
+        })
+        self.assertEqual(self.run_check(), [])
+        self.write({
+            "AI/plans/Big.md": plan(
+                status="done", progress=100,
+                body="- [x] a\n\n## Parts\n\n- [[Big – Eins]]\n"),
+            "AI/plans/Big – Eins.md":
+                "---\nstatus: done\n---\n- [x] b\n\n## Parts\n\n"
+                "- [[Big – Eins – Tief]]\n",
+            "AI/plans/Big – Eins – Tief.md":
+                "---\nstatus: active\n---\n- [ ] c\n",
+        })
+        hub = [f for f in self.run_check() if f.rel == "AI/plans/Big.md"]
+        self.assert_only(hub, "ERROR", "AI/plans/Big.md",
+                         "Big – Eins – Tief", "active")
+
 if __name__ == "__main__":
     unittest.main()

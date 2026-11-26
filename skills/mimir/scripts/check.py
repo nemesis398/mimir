@@ -85,30 +85,55 @@ def check_vault(vault: Path, cfg: config.Config) -> list[Finding]:
     for note in ctx.notes:
         found += _check_note(ctx, note)
     found += _check_progress(ctx)
+    found += [Finding("WARN", rel, f"{why}, skipped")
+              for rel, why in notes.unreadable_notes(vault)]
     found.sort(key=lambda finding: finding.rel)
     return found
 
 
-def fix_progress(vault: Path, cfg: config.Config) -> list[Path]:
-    """Write the counted progress where it differs; the changed paths."""
+def fix_progress(vault: Path, cfg: config.Config, report=None) \
+        -> list[Path]:
+    """Write the counted progress where it differs; the changed paths.
+
+    ``report(level, path, message)``, when given, hears of each note as it
+    is handled: ``fixed`` right after its write, ``WARN`` for a note left as
+    it is (a symlink, a frontmatter that cannot be edited safely), ``ERROR``
+    for a note that could not be read or written. Without it an ``OSError``
+    is raised.
+    """
     ctx = _Context(Path(vault), cfg)
     changed = []
     for note, counted in ctx.progress_targets():
         if note.front.get("progress") == counted and \
                 not isinstance(note.front.get("progress"), bool):
             continue
-        if _set_progress(note.path, counted):
-            changed.append(note.path)
+        if note.path.is_symlink():
+            _tell(report, "WARN", note.path,
+                  "progress: not written, a symlink")
+            continue
+        try:
+            why = _set_progress(note.path, counted)
+        except OSError as err:
+            if report is None:
+                raise
+            report("ERROR", note.path, f"progress: not written, {_why(err)}")
+            continue
+        if why:
+            _tell(report, "WARN", note.path, f"progress: not written, {why}")
+            continue
+        changed.append(note.path)
+        _tell(report, "fixed", note.path, "progress")
     return changed
 
 
-def fix_style(vault: Path, cfg: config.Config) \
+def fix_style(vault: Path, cfg: config.Config, report=None) \
         -> tuple[list[Path], list[tuple[Path, str]]]:
     """Rewrite each frontmatter into the style; (changed, [(path, why not)]).
 
     A note in ``style_skip_names`` or without a closed frontmatter is left
-    out; one that ``restyle`` cannot rewrite is listed with its reason and
-    left untouched.
+    out; one that ``restyle`` cannot rewrite, or a symlink that would need
+    it, is listed with its reason and left untouched. ``report`` hears of
+    each write and failure as ``fix_progress``'s does.
     """
     if not cfg.key_order and cfg.list_style is None:
         return [], []
@@ -116,7 +141,13 @@ def fix_style(vault: Path, cfg: config.Config) \
     for note in notes.load_notes(Path(vault)):
         if note.front is None or _style_skipped(cfg, note.rel):
             continue
-        data = note.path.read_bytes()
+        try:
+            data = note.path.read_bytes()
+        except OSError as err:
+            if report is None:
+                raise
+            report("ERROR", note.path, f"style: not read, {_why(err)}")
+            continue
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -125,12 +156,31 @@ def fix_style(vault: Path, cfg: config.Config) \
                 skipped.append((note.path, "not UTF-8"))
             continue
         new, reason = restyle(text, cfg)
+        if new is not None and new != text and note.path.is_symlink():
+            reason = "a symlink"
         if reason:
             skipped.append((note.path, reason))
         elif new is not None and new != text:
-            _write(note.path, new.encode("utf-8"))
+            try:
+                _write(note.path, new.encode("utf-8"))
+            except OSError as err:
+                if report is None:
+                    raise
+                report("ERROR", note.path, f"style: not written, {_why(err)}")
+                continue
             changed.append(note.path)
+            _tell(report, "fixed", note.path, "style")
     return changed, skipped
+
+
+def _tell(report, level: str, path: Path, message: str) -> None:
+    if report is not None:
+        report(level, path, message)
+
+
+def _why(err: OSError) -> str:
+    """An OSError's reason without the path, which the caller names."""
+    return err.strerror or str(err)
 
 
 def restyle(text: str, cfg: config.Config) -> tuple[str | None, str | None]:
@@ -254,21 +304,23 @@ def main(argv: list[str] | None = None) -> int:
     except config.ConfigError as err:
         print(f"mimir: {err}", file=sys.stderr)
         return 2
+    failed = []
     if args.fix:
-        for path in fix_progress(vault, cfg):
+        def report(level, path, message):
+            if level == "ERROR":
+                failed.append(path)
             rel = path.relative_to(vault).as_posix()
-            print(f"fixed {rel}: progress", file=sys.stderr)
-        changed, skipped = fix_style(vault, cfg)
-        for path in changed:
-            rel = path.relative_to(vault).as_posix()
-            print(f"fixed {rel}: style", file=sys.stderr)
+            print(f"{level} {rel}: {message}", file=sys.stderr, flush=True)
+
+        fix_progress(vault, cfg, report)
+        _, skipped = fix_style(vault, cfg, report)
         for path, reason in skipped:
-            rel = path.relative_to(vault).as_posix()
-            print(f"WARN {rel}: style: not rewritten, {reason}",
-                  file=sys.stderr)
+            report("WARN", path, f"style: not rewritten, {reason}")
     findings = check_vault(vault, cfg)
     for finding in findings:
         print(f"{finding.level} {finding.rel}: {finding.message}")
+    if failed:
+        return 1
     if not args.report_only and any(f.level == "ERROR" for f in findings):
         return 1
     return 0
@@ -324,6 +376,20 @@ class _Context:
                 found.append(candidates[0])
         return found
 
+    def all_parts(self, rel: str) -> list[notes.Note]:
+        """The parts of the hub rel and, depth first, the parts of those."""
+        found, seen = [], {rel}
+
+        def walk(hub):
+            for part in self.parts.get(hub, []):
+                if part.rel not in seen:
+                    seen.add(part.rel)
+                    found.append(part)
+                    walk(part.rel)
+
+        walk(rel)
+        return found
+
     def is_template(self, note: notes.Note) -> bool:
         return note.rel in self.template_files or any(
             note.rel.startswith(d + "/") for d in self.template_dirs)
@@ -355,7 +421,7 @@ class _Context:
             status = str(note.front.get("status"))
             if status == "cancelled":
                 continue
-            texts = [note.body] + [p.body for p in self.parts.get(note.rel, [])]
+            texts = [note.body] + [p.body for p in self.all_parts(note.rel)]
             counted = count_progress(texts)
             if status == "done" and (counted is not None
                                      or "progress" in note.front):
@@ -410,7 +476,7 @@ def _check_note(ctx: _Context, note: notes.Note) -> list[Finding]:
                 error(f"name does not match {kind.name_pattern}, the "
                       f"name_pattern of kind {kind.name}")
     if str(status) == "done":
-        for part in ctx.parts.get(rel, []):
+        for part in ctx.all_parts(rel):
             part_status = (part.front or {}).get("status")
             if part_status is not None and \
                     str(part_status) not in CLOSED_STATES:
@@ -872,28 +938,46 @@ def _unfenced(text: str):
             fence = None
 
 
-def _set_progress(path: Path, value: int) -> bool:
-    """Set the frontmatter's progress line to value; False if it cannot."""
+def _set_progress(path: Path, value: int) -> str | None:
+    """Set the frontmatter's progress to value; None once written, else why.
+
+    Each ``progress`` entry becomes the one line ``progress: <value>``;
+    without one, the line goes in after the whole ``status`` entry (after
+    the blank lines a block scalar may keep), else before the closing
+    ``---``. The result must read as the old frontmatter plus the new
+    value, or nothing is written.
+    """
     try:
         text = path.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
-        return False
-    lines = text.splitlines(keepends=True)
-    end = notes.front_end(lines)
-    if not lines or lines[0].rstrip("\r\n") != "---" or end is None:
-        return False
-    head = lines[1:end]
-    at = next((i for i, line in enumerate(head)
-               if line.startswith("progress:")), None)
-    if at is not None:
-        head[at] = f"progress: {value}" + _ending(head[at], lines[0])
-    else:
-        after = next((i for i, line in enumerate(head)
-                      if line.startswith("status:")), len(head) - 1)
-        ending = _ending(head[after] if head else "", lines[0])
-        head.insert(after + 1, f"progress: {value}{ending}")
-    _write(path, "".join(lines[:1] + head + lines[end:]).encode("utf-8"))
-    return True
+        return "not UTF-8"
+    layout = notes.front_entries(text)
+    if layout is None:
+        return "no closed frontmatter"
+    lines, end, entries = layout
+    out = list(lines)
+    found = [entry for entry in entries if entry.key == "progress"]
+    for entry in reversed(found):
+        ending = _ending(lines[entry.stop - 1], lines[0])
+        out[entry.start:entry.stop] = [f"progress: {value}{ending}"]
+    if not found:
+        status = next((e for e in entries if e.key == "status"), None)
+        at = end if status is None else status.stop
+        if status is not None and status.raw.startswith(("|", ">")):
+            while at < end and not lines[at].strip():
+                at += 1
+        out.insert(at, f"progress: {value}" + _ending(lines[at - 1], lines[0]))
+    new = "".join(out)
+    old_front, old_body = notes.parse_front(text)
+    new_front, new_body = notes.parse_front(new)
+    old_tails, new_tails = _block_tails(text), _block_tails(new)
+    old_tails.pop("progress", None)
+    new_tails.pop("progress", None)
+    if new_front != {**old_front, "progress": value} or new_body != old_body \
+            or new_tails != old_tails:
+        return "the frontmatter cannot be edited safely"
+    _write(path, new.encode("utf-8"))
+    return None
 
 
 def _write(path: Path, data: bytes) -> None:
