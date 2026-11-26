@@ -26,7 +26,7 @@ class ConfigTest(VaultTestCase):
         self.assertEqual(cfg.states,
                          ("planned", "active", "paused", "done", "cancelled"))
         self.assertEqual(len(cfg.areas), 2)
-        self.assertEqual(set(cfg.kinds), {"project", "plan"})
+        self.assertLessEqual({"project", "plan", "plan-part"}, set(cfg.kinds))
         plan = cfg.kinds["plan"]
         self.assertIsInstance(plan, config.Kind)
         self.assertEqual(plan.name, "plan")

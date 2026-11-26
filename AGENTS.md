@@ -15,8 +15,10 @@ the shape.
 | --- | --- |
 | `.claude-plugin/` | the plugin manifest and the marketplace of one |
 | `config.example.json` | an example `.mimir.json` for a made-up vault |
+| `skills/mimir/SKILL.md` | the skill: where a note goes, the commands, the red lines |
 | `skills/mimir/scripts/` | the config reader, the note reader, the commands |
 | `skills/mimir/tests/` | the tests, stdlib `unittest` |
+| `evals/` | cases for `claude plugin eval`, with Alice's vault |
 
 ## Rules
 
