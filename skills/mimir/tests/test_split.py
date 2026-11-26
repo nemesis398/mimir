@@ -565,6 +565,55 @@ class SplitCommandTest(VaultTestCase):
         self.assertEqual(
             (self.vault / "Work plan/Work plan.md").read_bytes(), before)
 
+    def test_note_changed_by_the_move_stops(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        code, out = self.run_split("Work plan.md", "--force",
+                                   MIMIR_STUB_MOVE_APPEND="\nSee [[Desk]].\n")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Work plan/Work plan.md changed", out)
+        self.assertEqual([c[0] for c in self.calls()],
+                         ["version", "vault", "move"])
+        self.assertEqual(snapshot(self.vault / "Work plan"), {
+            "Work plan.md": (PHASE_PLAN + "\nSee [[Desk]].\n").encode()})
+
+    def test_note_changed_before_the_hub_write_stops(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        note = self.vault / "Work plan/Work plan.md"
+        edits = []
+
+        def editor(_seconds):
+            if not edits:
+                edits.append(1)
+                with open(note, "a", encoding="utf-8") as handle:
+                    handle.write("Alice adds a line.\n")
+
+        with mock.patch.object(obsidian_cli.time, "sleep", editor):
+            code, out = self.run_split("Work plan.md", "--force")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Work plan/Work plan.md changed", out)
+        self.assertEqual(note.read_text("utf-8"),
+                         PHASE_PLAN + "Alice adds a line.\n")
+        self.assertIn("created before the failure: Work plan/Work plan – "
+                      "Phase 1 Setup.md, Work plan/Work plan – Phase 2 Use.md",
+                      out)
+
+    def test_hub_and_rewrites_replace_atomically(self):
+        self.write({"Garden Shed.md": ENTITY,
+                    "Other.md": "[[Garden Shed#Decisions]]\n"})
+        with mock.patch.object(split.os, "replace",
+                               wraps=os.replace) as replace:
+            code, out = self.run_split("Garden Shed.md", "--force")
+        self.assertEqual(code, 0, out)
+        targets = {os.path.realpath(call.args[1])
+                   for call in replace.call_args_list}
+        self.assertEqual(targets, {
+            os.path.realpath(self.vault / "Garden Shed/Garden Shed.md"),
+            os.path.realpath(self.vault / "Other.md")})
+        self.assertEqual([name for name in snapshot(self.vault)
+                          if "/." in "/" + name], [".mimir.json"])
+        self.assertEqual((self.vault / "Other.md").read_text("utf-8"),
+                         "[[Garden Shed – Decisions]]\n")
+
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,
                     "Elsewhere/Work plan – Phase 2 Use.md": "taken\n"})

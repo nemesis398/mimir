@@ -17,10 +17,13 @@ Usage: split.py NOTE [--vault PATH] [--level N] [--keep HEADING]...
 """
 
 import argparse
+import contextlib
 import fnmatch
 import os
 import re
+import stat
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -284,8 +287,35 @@ def heading_link_rewrites(vault: Path, name: str,
     return found
 
 
+def write_atomic(path: Path, data: bytes) -> None:
+    """Write data to path through a temp file next to it and os.replace.
+
+    A reader sees the old file or the new one, never half of it. A symlink
+    is followed, so the file it points at is replaced and the link stays;
+    the file keeps its mode.
+    """
+    real = Path(os.path.realpath(path))
+    fd, tmp = tempfile.mkstemp(dir=real.parent, prefix=f".{real.name}.",
+                               suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        with contextlib.suppress(FileNotFoundError):
+            os.chmod(tmp, stat.S_IMODE(os.stat(real).st_mode))
+        os.replace(tmp, real)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def apply_rewrites(rewrites: list[tuple[Path, str, str]]) -> None:
-    """Edit each file, replacing old links with new ones outside fenced code."""
+    """Edit each file, replacing old links with new ones outside fenced code.
+
+    Each file is read when it is edited and written with write_atomic.
+    """
     by_file = {}
     for path, old, new in rewrites:
         by_file.setdefault(path, []).append((old, new))
@@ -297,7 +327,9 @@ def apply_rewrites(rewrites: list[tuple[Path, str, str]]) -> None:
                 for old, new in pairs:
                     line = line.replace(old, new)
             out.append(line)
-        path.write_bytes("".join(out).encode("utf-8"))
+        new_text = "".join(out)
+        if new_text != text:
+            write_atomic(path, new_text.encode("utf-8"))
 
 
 def skip_reason(cfg: config.Config, rel: str, front: dict | None) -> str | None:
@@ -449,30 +481,43 @@ def main(argv: list[str] | None = None) -> int:
             if not target.is_file() or path.exists():
                 raise obsidian_cli.CliError(
                     f"obsidian move did not leave {rel} at {new_rel}")
-        except (OSError, obsidian_cli.CliError) as err:
+            if target.read_bytes() != data:
+                raise SplitError(f"{new_rel} changed in the move (the app "
+                                 "updated its links?); split it again")
+        except (OSError, obsidian_cli.CliError, SplitError) as err:
             print(f"split: {err}", file=sys.stderr)
             print(f"split: stopped; {rel} is not split", file=sys.stderr)
             return 1
         print(f"moved {rel} to {new_rel}")
         path = target
-    for base, part in parts:
-        part_rel = f"{prefix}{base}.md"
-        try:
+    hub_written = False
+    try:
+        for base, part in parts:
+            part_rel = f"{prefix}{base}.md"
             obsidian_cli.create_note(vault, part_rel, part)
-        except obsidian_cli.CliError as err:
-            print(f"split: {err}", file=sys.stderr)
-            print(f"split: stopped; {new_rel} holds the note's text "
-                  f"untouched; created before the failure: "
-                  f"{', '.join(created) or 'nothing'}", file=sys.stderr)
-            return 1
-        created.append(part_rel)
-        print(f"created {part_rel}")
-    path.write_bytes(hub.encode("utf-8"))
-    print(f"wrote the hub {new_rel}")
-    rewrites = heading_link_rewrites(vault, name, sections)
-    apply_rewrites(rewrites)
-    for file, old, new in rewrites:
-        print(f"rewrote {file.relative_to(vault).as_posix()}: {old} -> {new}")
+            created.append(part_rel)
+            print(f"created {part_rel}")
+        if path.read_bytes() != data:
+            raise SplitError(f"{new_rel} changed while the parts were "
+                             "written; split it again")
+        write_atomic(path, hub.encode("utf-8"))
+        hub_written = True
+        print(f"wrote the hub {new_rel}")
+        by_file = {}
+        for rewrite in heading_link_rewrites(vault, name, sections):
+            by_file.setdefault(rewrite[0], []).append(rewrite)
+        for file, group in by_file.items():
+            apply_rewrites(group)
+            for _, old, new in group:
+                print(f"rewrote {file.relative_to(vault).as_posix()}: "
+                      f"{old} -> {new}")
+    except (obsidian_cli.CliError, SplitError) as err:
+        state = ("the hub is written" if hub_written
+                 else f"{new_rel} is not overwritten")
+        print(f"split: {err}", file=sys.stderr)
+        print(f"split: stopped; {state}; created before the failure: "
+              f"{', '.join(created) or 'nothing'}", file=sys.stderr)
+        return 1
     return 0
 
 
