@@ -386,7 +386,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             keep = ()
         hub, parts, sections = _plan(name, text, args.level, keep)
-        if is_plan:
+        part_type = cfg.kinds["plan-part"].note_type \
+            if "plan-part" in cfg.kinds else "plan-part"
+        if is_plan or (front and front.get("type") == part_type):
             parts = [(base, plan_part_front(cfg, status) + part)
                      for base, part in parts]
         taken = {p.name[:-3].casefold() for p in _markdown_files(vault)}

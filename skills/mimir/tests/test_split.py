@@ -444,6 +444,18 @@ class SplitCommandTest(VaultTestCase):
         bare = [(b, part[len(front):]) for b, part in parts]
         self.assertEqual(split.join_parts(hub, bare), KEEP_PLAN)
 
+    def test_plan_part_split_deeper_keeps_the_part_front(self):
+        front = "---\ntype: plan-part\nstatus: done\n---\n"
+        text = front + "## Phase 1\n\n### Task 1: A\n\na\n\n### Task 2: B\n\nb\n"
+        self.write({"Plan – Phase 1.md": text})
+        code, out = self.run_split("Plan – Phase 1.md", "--force")
+        self.assertEqual(code, 0, out)
+        hub, parts = self.read_split("Plan – Phase 1", "Plan – Phase 1")
+        self.assertTrue(hub.startswith(front))
+        self.assertEqual(len(parts), 2)
+        for _, part in parts:
+            self.assertTrue(part.startswith(front + "### Task "), part)
+
     def test_keep_flag(self):
         self.write({"Garden Shed.md": ENTITY})
         code, out = self.run_split("Garden Shed.md", "--force",
