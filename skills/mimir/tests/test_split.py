@@ -233,6 +233,14 @@ class SplitTextTest(unittest.TestCase):
                 with self.assertRaises(split.SplitError):
                     split.split_text("Pond plan", KEEP_PLAN, keep=keep)
 
+    def test_crlf_note_gets_a_crlf_parts_list(self):
+        text = ENTITY.replace("\n", "\r\n")
+        hub, parts = split.split_text("Garden Shed", text)
+        self.assertIn("\r\n## Parts\r\n\r\n- [[Garden Shed – Decisions]]\r\n",
+                      hub)
+        self.assertEqual(hub.count("\n"), hub.count("\r\n"))
+        self.assertEqual(split.join_parts(hub, parts), text)
+
     def test_duplicate_headings_get_distinct_parts(self):
         text = "## Notes\n\na\n\n## Notes\n\nb\n"
         hub, parts = split.split_text("X", text)
@@ -724,6 +732,20 @@ class SplitCommandTest(VaultTestCase):
         self.assertEqual(self.calls(), [])
         self.assertEqual(snapshot(self.vault), before)
         self.assertTrue((self.vault / "Link.md").is_symlink())
+
+    def test_crlf_plan_parts_get_crlf_frontmatter(self):
+        self.write({"Work plan.md": PHASE_PLAN.replace("\n", "\r\n")})
+        code, out = self.run_split("Work plan.md", "--force")
+        self.assertEqual(code, 0, out)
+        files = snapshot(self.vault / "Work plan")
+        self.assertEqual(len(files), 3)
+        for rel, data in files.items():
+            with self.subTest(rel=rel):
+                self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))
+                if rel != "Work plan.md":
+                    self.assertTrue(data.startswith(
+                        b"---\r\ntype: plan-part\r\nstatus: done\r\n"
+                        b"---\r\n## Phase "), data)
 
     def test_existing_part_name_refused(self):
         self.write({"Work plan.md": PHASE_PLAN,

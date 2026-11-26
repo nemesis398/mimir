@@ -90,6 +90,12 @@ def _body_start(lines: list[str]) -> int:
     return 0 if end is None else end + 1
 
 
+def _newline(text: str) -> str:
+    """The ending of the text's first line, ``\\r\\n`` or ``\\n``."""
+    end = text.find("\n")
+    return "\r\n" if end > 0 and text[end - 1] == "\r" else "\n"
+
+
 def _body_lines(text: str):
     """Yield (offset, line without its ending) for each body line outside fences."""
     lines = text.splitlines(keepends=True)
@@ -142,13 +148,17 @@ def part_name(name: str, heading: str) -> str:
 PLAN_STARTS = ("Phase ", "Task ")
 
 
-def plan_part_front(cfg: config.Config, status) -> str:
-    """The frontmatter of a plan's part: the part type and the hub's status."""
+def plan_part_front(cfg: config.Config, status, newline: str = "\n") -> str:
+    """The frontmatter of a plan's part: the part type and the hub's status.
+
+    Its lines end with newline, the note's own line ending.
+    """
     kind = cfg.kinds.get("plan-part")
-    lines = [f"type: {kind.note_type if kind else 'plan-part'}"]
+    lines = ["---", f"type: {kind.note_type if kind else 'plan-part'}"]
     if status:
         lines.append(f"status: {status}")
-    return "---\n" + "\n".join(lines) + "\n---\n"
+    lines.append("---")
+    return "".join(line + newline for line in lines)
 
 
 def plan_keep(text: str, level: int = 0) -> tuple[str, ...]:
@@ -226,8 +236,9 @@ def _plan(name: str, text: str, level: int, keep=()):
                 heads_part = offset == start and not key.startswith("^")
                 target = base if heads_part else f"{base}#{key}"
         sections.setdefault(key, target)
-    hub = text[:cuts[0].offset] + PARTS_HEADING + "\n" + "".join(
-        f"- [[{base}]]\n" for base, _ in parts)
+    newline = _newline(text)
+    hub = text[:cuts[0].offset] + PARTS_HEADING.rstrip("\n") + newline \
+        + newline + "".join(f"- [[{base}]]{newline}" for base, _ in parts)
     return hub, parts, sections
 
 
@@ -244,7 +255,8 @@ def split_text(name: str, text: str, level: int = 0,
 
 def join_parts(hub: str, parts: list[tuple[str, str]]) -> str:
     """The original text of a note that split_text turned into hub and parts."""
-    cut = hub.rfind(PARTS_HEADING)
+    cut = max(hub.rfind(PARTS_HEADING),
+              hub.rfind(PARTS_HEADING.replace("\n", "\r\n")))
     if cut == -1 or (cut > 0 and hub[cut - 1] != "\n"):
         raise SplitError("the hub has no ## Parts list")
     return hub[:cut] + "".join(text for _, text in parts)
@@ -533,8 +545,8 @@ def main(argv: list[str] | None = None) -> int:
         part_type = cfg.kinds["plan-part"].note_type \
             if "plan-part" in cfg.kinds else "plan-part"
         if is_plan or (front and front.get("type") == part_type):
-            parts = [(base, plan_part_front(cfg, status) + part)
-                     for base, part in parts]
+            front_text = plan_part_front(cfg, status, _newline(text))
+            parts = [(base, front_text + part) for base, part in parts]
         taken = {p.name[:-3].casefold() for p in _markdown_files(vault)}
         clash = [base for base, _ in parts if base.casefold() in taken]
         if clash:
