@@ -48,7 +48,7 @@
   "date_keys": ["updated", "created"],
   "tag_pattern": "[a-z0-9]+(-[a-z0-9]+)*",
   "warn_words": ["und", "oder", "für", "mit", "der", "die", "das"],
-  "key_order": ["type", "status", "project", "progress", "updated", "created", "description", "tags", "aliases"],
+  "key_order": ["type", "status", "project", "domain", "progress", "updated", "created", "description", "tags", "aliases"],
   "list_style": "block",
   "style_skip_names": ["*.excalidraw.md"]
 }

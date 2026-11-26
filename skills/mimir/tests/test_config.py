@@ -33,6 +33,9 @@ class ConfigTest(VaultTestCase):
         self.assertEqual(plan.progress, "checkboxes")
         self.assertIsInstance(cfg.view_properties, frozenset)
         self.assertIsInstance(cfg.size_cap_bytes, int)
+        self.assertEqual(cfg.key_order, (
+            "type", "status", "project", "domain", "progress", "updated",
+            "created", "description", "tags", "aliases"))
 
     def test_config_missing_key_names_it(self):
         data = self.example()
