@@ -113,6 +113,7 @@ def new_note(vault: Path, cfg: config.Config, kind: str, name: str,
     rel = "/".join(parts + [f"{name}.md"])
     try:
         obsidian_cli.run(["version"], cwd=vault)
+        obsidian_cli.check_vault(vault)
         return obsidian_cli.create_note(vault, rel, text)
     except obsidian_cli.CliError as err:
         raise NewError(str(err)) from None
@@ -132,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg = config.load(vault)
         path = new_note(vault, cfg, args.kind, args.name, args.area,
                         args.parent)
-    except config.ConfigError as err:
+    except (config.ConfigError, obsidian_cli.WrongVault) as err:
         print(f"new: {err}", file=sys.stderr)
         return 2
     except NewError as err:

@@ -432,10 +432,14 @@ def main(argv: list[str] | None = None) -> int:
     created = []
     try:
         obsidian_cli.run(["version"], cwd=vault)
+        obsidian_cli.check_vault(vault)
     except obsidian_cli.CliError as err:
         print(f"split: the Obsidian app does not answer: {err}",
               file=sys.stderr)
         return 1
+    except obsidian_cli.WrongVault as err:
+        print(f"split: {err}", file=sys.stderr)
+        return 2
     if moving:
         target = vault / new_rel
         try:

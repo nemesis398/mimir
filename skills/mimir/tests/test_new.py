@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -30,6 +32,7 @@ class NewNoteTest(VaultTestCase):
         data = config_data()
         data["kinds"]["project"]["template"] = "templates/Project.md"
         data["allowed_keys"].append("created")
+        self.data = data
         self.cfg = make_config(data)
         self.log = self.vault.parent / f"{self.vault.name}.log"
         self.cwd_log = self.vault.parent / f"{self.vault.name}.cwd"
@@ -38,6 +41,7 @@ class NewNoteTest(VaultTestCase):
         env = {"MIMIR_OBSIDIAN": str(STUB), "MIMIR_STUB_LOG": str(self.log),
                "MIMIR_STUB_CWD_LOG": str(self.cwd_log),
                "MIMIR_STUB_VAULT": str(self.vault),
+               "MIMIR_STUB_OPEN_VAULT": "", "MIMIR_STUB_STDERR_ERROR": "",
                "MIMIR_STUB_ERROR": "", "MIMIR_STUB_EXIT": ""}
         for patcher in (mock.patch.dict(os.environ, env),
                         mock.patch.object(obsidian_cli, "REREAD_DELAY", 0)):
@@ -91,7 +95,7 @@ class NewNoteTest(VaultTestCase):
     def test_cli_runs_in_the_vault(self):
         new.new_note(self.vault, self.cfg, "project", "Pantry", "Workshop")
         cwds = self.cwd_log.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(cwds), 2)
+        self.assertEqual(len(cwds), 3)
         self.assertEqual({os.path.realpath(c) for c in cwds},
                          {os.path.realpath(self.vault)})
 
@@ -138,9 +142,25 @@ class NewNoteTest(VaultTestCase):
             with self.assertRaises(new.NewError):
                 new.new_note(self.vault, self.cfg, "project", "Pantry",
                              "Workshop")
-        self.assertEqual([c[0] for c in self.calls()], ["version", "create"])
+        self.assertEqual([c[0] for c in self.calls()],
+                         ["version", "vault", "create"])
         self.assertFalse((self.vault / "Workshop/Pantry/Pantry.md")
                          .exists())
+
+    def test_other_vault_open_refuses(self):
+        self.write({".mimir.json": json.dumps(self.data)})
+        other = str(self.vault.parent / "Bob vault")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"MIMIR_STUB_OPEN_VAULT": other}), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(out):
+            code = new.main(["project", "Pantry", "--area", "Workshop",
+                             "--vault", str(self.vault)])
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertIn(other, out.getvalue())
+        self.assertIn(os.path.realpath(self.vault), out.getvalue())
+        self.assertEqual([c[0] for c in self.calls()], ["version", "vault"])
+        self.assertFalse((self.vault / "Workshop/Pantry").exists())
 
     def test_template_filled_first_raises(self):
         def templater(_seconds):

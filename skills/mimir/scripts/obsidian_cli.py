@@ -1,8 +1,10 @@
 """Call the Obsidian CLI and treat its failures as failures.
 
 The CLI takes ``key=value`` arguments and exits 0 even when a command fails;
-it reports the failure as a stdout line that starts with ``Error:``. The
-binary is ``MIMIR_OBSIDIAN`` when that is set, else ``obsidian``.
+it reports the failure as a line that starts with ``Error:``, on stdout or
+stderr. The binary is ``MIMIR_OBSIDIAN`` when that is set, else
+``obsidian``. The app answers for the vault it has open, whatever directory
+the CLI runs in, so check_vault comes before the first write.
 """
 
 import os
@@ -26,6 +28,17 @@ class CliError(Exception):
     """The Obsidian CLI could not run, exited non-zero or printed Error:."""
 
 
+class WrongVault(Exception):
+    """The app has another vault open than the one asked for."""
+
+    def __init__(self, open_vault: str, vault: Path):
+        super().__init__(
+            f"the Obsidian app has {open_vault or 'no vault'} open, not "
+            f"{vault}; open {vault} in the app first")
+        self.open_vault = open_vault
+        self.vault = vault
+
+
 def binary() -> str:
     return os.environ.get("MIMIR_OBSIDIAN") or "obsidian"
 
@@ -47,10 +60,23 @@ def run(args: list[str], cwd: Path | None = None) -> str:
     if done.returncode != 0:
         detail = (done.stderr or done.stdout).strip()
         raise CliError(f"obsidian {shown}: exit {done.returncode}: {detail}")
-    for line in done.stdout.splitlines():
+    for line in (done.stdout + "\n" + done.stderr).splitlines():
         if line.lstrip().startswith("Error:"):
             raise CliError(f"obsidian {shown}: {line.strip()}")
     return done.stdout
+
+
+def check_vault(vault: Path) -> None:
+    """Raise WrongVault unless the vault open in the app is vault.
+
+    ``vault info=path`` prints the open vault's path; its last non-empty
+    line is compared with vault, both resolved. A CLI failure is CliError.
+    """
+    lines = [line.strip() for line in
+             run(["vault", "info=path"], cwd=vault).splitlines()]
+    shown = next((line for line in reversed(lines) if line), "")
+    if not shown or os.path.realpath(shown) != os.path.realpath(vault):
+        raise WrongVault(shown, Path(vault))
 
 
 def create_note(vault: Path, rel: str, text: str) -> Path:

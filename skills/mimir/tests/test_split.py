@@ -350,7 +350,9 @@ class SplitCommandTest(VaultTestCase):
                     "MIMIR_STUB_LOG": str(self.log),
                     "MIMIR_STUB_CWD_LOG": str(self.cwd_log),
                     "MIMIR_STUB_VAULT": str(self.vault),
-                    "MIMIR_STUB_ERROR": "", "MIMIR_STUB_EXIT": ""}
+                    "MIMIR_STUB_OPEN_VAULT": "", "MIMIR_STUB_MOVE_APPEND": "",
+                    "MIMIR_STUB_ERROR": "", "MIMIR_STUB_EXIT": "",
+                    "MIMIR_STUB_STDERR_ERROR": ""}
 
     def run_split(self, *args, **env):
         out = io.StringIO()
@@ -391,11 +393,11 @@ class SplitCommandTest(VaultTestCase):
             "[[Garden Shed – Troubleshooting#Wifi drops]]\n")
         self.assertIn("Other.md", out)
         calls = self.calls()
-        self.assertEqual(calls[:2], [
-            ["version"],
+        self.assertEqual(calls[:3], [
+            ["version"], ["vault", "info=path"],
             ["move", "path=Computer/Garden Shed.md",
              "to=Computer/Garden Shed/Garden Shed.md"]])
-        self.assertEqual(calls[2], [
+        self.assertEqual(calls[3], [
             "create", "path=Computer/Garden Shed/Garden Shed – Decisions.md"])
         self.assertEqual(sorted(p.name for p in
                                 (self.vault / "Computer").iterdir()),
@@ -426,7 +428,8 @@ class SplitCommandTest(VaultTestCase):
         code, out = self.run_split("Work plan.md", "--force",
                                    MIMIR_STUB_ERROR="move")
         self.assertNotEqual(code, 0)
-        self.assertEqual([c[0] for c in self.calls()], ["version", "move"])
+        self.assertEqual([c[0] for c in self.calls()],
+                         ["version", "vault", "move"])
         self.assertEqual(snapshot(self.vault), before)
 
     def test_plan_keeps_leading_sections(self):
@@ -475,7 +478,7 @@ class SplitCommandTest(VaultTestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("Error:", out)
         self.assertEqual([c[0] for c in self.calls()],
-                         ["version", "move", "create"])
+                         ["version", "vault", "move", "create"])
         self.assertEqual(snapshot(self.vault), before)
 
     def test_app_not_running_refuses(self):
@@ -485,6 +488,18 @@ class SplitCommandTest(VaultTestCase):
                                  MIMIR_STUB_ERROR="version")
         self.assertNotEqual(code, 0)
         self.assertEqual(self.calls(), [["version"]])
+        self.assertEqual(snapshot(self.vault), before)
+
+    def test_other_vault_open_refuses(self):
+        self.write({"Work plan.md": PHASE_PLAN})
+        before = snapshot(self.vault)
+        other = str(self.vault.parent / "Bob vault")
+        code, out = self.run_split("Work plan.md", "--force",
+                                   MIMIR_STUB_OPEN_VAULT=other)
+        self.assertEqual(code, 2, out)
+        self.assertIn(other, out)
+        self.assertIn(os.path.realpath(self.vault), out)
+        self.assertEqual(self.calls(), [["version"], ["vault", "info=path"]])
         self.assertEqual(snapshot(self.vault), before)
 
     def test_dry_run_writes_nothing(self):
