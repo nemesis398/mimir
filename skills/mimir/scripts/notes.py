@@ -233,21 +233,50 @@ def links(value) -> list[str]:
 
 
 def load_notes(vault: Path) -> list[Note]:
-    """Every ``*.md`` note under vault, skipping dot-directories at any depth."""
+    """Every ``*.md`` note under vault, skipping dot-directories at any depth.
+
+    A note that cannot be read, such as a symlink to a missing file, is left
+    out; ``unreadable_notes`` names those.
+    """
     vault = Path(vault)
     loaded = []
+    for path in _note_paths(vault):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        front, body = parse_front(data.decode("utf-8", errors="replace"))
+        rel = path.relative_to(vault).as_posix()
+        loaded.append(Note(path, rel, front, body, len(data)))
+    loaded.sort(key=lambda note: note.rel)
+    return loaded
+
+
+def unreadable_notes(vault: Path) -> list[tuple[str, str]]:
+    """(rel, why) for each ``*.md`` that ``load_notes`` leaves out, by rel."""
+    vault = Path(vault)
+    found = []
+    for path in _note_paths(vault):
+        rel = path.relative_to(vault).as_posix()
+        if path.is_symlink() and not path.exists():
+            found.append((rel, "a symlink to a missing file"))
+            continue
+        try:
+            with open(path, "rb"):
+                pass
+        except OSError as err:
+            found.append((rel, f"cannot be read, {err.strerror or err}"))
+    found.sort()
+    return found
+
+
+def _note_paths(vault: Path):
+    """The path of each ``*.md`` file under vault, outside dot-directories."""
     for root, dirs, files in os.walk(vault):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for name in files:
-            if not name.endswith(".md"):
-                continue
-            path = Path(root) / name
-            data = path.read_bytes()
-            front, body = parse_front(data.decode("utf-8", errors="replace"))
-            rel = path.relative_to(vault).as_posix()
-            loaded.append(Note(path, rel, front, body, len(data)))
-    loaded.sort(key=lambda note: note.rel)
-    return loaded
+            if name.endswith(".md"):
+                yield Path(root) / name
 
 
 def _indented(line: str) -> bool:

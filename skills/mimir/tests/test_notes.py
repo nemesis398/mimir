@@ -106,6 +106,14 @@ class LoadNotesTest(VaultTestCase):
         self.assertEqual(note.body, "grön – Overview\n")
         self.assertEqual(note.size, len(content.encode("utf-8")))
 
+    def test_dangling_symlink_skipped(self):
+        self.write({"a/b.md": "Text\n"})
+        (self.vault / "a/x.md").symlink_to(self.vault / "a/gone.md")
+        self.assertEqual([n.rel for n in notes.load_notes(self.vault)],
+                         ["a/b.md"])
+        self.assertEqual(notes.unreadable_notes(self.vault),
+                         [("a/x.md", "a symlink to a missing file")])
+
 
 HUB_LINE = "description: Persönliches: Alices Garten und die Bienenstöcke."
 

@@ -673,5 +673,15 @@ class CheckTest(VaultTestCase):
         self.assert_only(hub, "ERROR", "AI/plans/Big.md",
                          "Big – Eins – Tief", "active")
 
+    def test_dangling_symlink_warns(self):
+        self.write({"AI/plans/P.md": plan(progress=100, body="- [x] a\n")})
+        (self.vault / "AI/plans/x.md").symlink_to(self.vault / "AI/gone.md")
+        self.assert_only(self.run_check(), "WARN", "AI/plans/x.md",
+                         "symlink", "missing")
+        code, out, err = self.run_cli_err("--fix", data=config_data())
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("WARN AI/plans/x.md:", out)
+
+
 if __name__ == "__main__":
     unittest.main()
